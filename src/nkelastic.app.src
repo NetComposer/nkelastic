@@ -1,0 +1,9 @@
+{application, nkelastic, [
+    {description, "NkELASTIC Plugin"},
+    {vsn, "develop"},
+    {modules, []},
+    {registered, []},
+    {mod, {nkelastic_app, []}},
+    {applications, [nkservice]},
+    {env, []}
+]}.
