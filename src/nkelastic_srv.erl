@@ -281,11 +281,12 @@ terminate(_Reason, _State) ->
 
 %% @private
 set_log(#state{srv_id=SrvId}=State) ->
+    nkservice_util:register_for_changes(SrvId),
     Debug = case nkservice_util:get_debug_info(SrvId, nkelastic) of
         {true, _} -> true;
         _ -> false
     end,
-    ?LLOG(info, "debug: ~p", [Debug]),
+    % ?LLOG(warning, "debug: ~p", [Debug]),
     put(nkelastic_debug, Debug),
     State#state{debug=Debug}.
 
