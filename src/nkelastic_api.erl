@@ -227,7 +227,7 @@ delete_alias(Id, Index, Name) ->
 
 %% @doc Gets an object by id
 -spec get(id(), index(), type(), obj_id()) ->
-	ok | {error, term()}.
+	{ok, map(), integer()} | {error, term()}.
 
 get(Id, Index, Type, ObjId) ->
     case request(Id, get, [Index, "/", Type, "/", ObjId]) of
@@ -289,7 +289,8 @@ url_search(Id, Index, Type, Str) ->
         size => integer(),
         from => integer(),
         sort_by => [Field::binary()],
-        sort_order => asc | desc
+        sort_order => asc | desc,
+        sort_fields => #{atom() => atom()}   %% Change the sorting field
     }.
 
 
@@ -472,7 +473,17 @@ list_get_query([{Field, Value}|Rest], Acc) ->
 %% @private
 list_get_sort(#{sort_by:=Sort}=Opts) when is_list(Sort), length(Sort)>0 ->
     Order = to_bin(maps:get(sort_order, Opts, asc)),
-    Fields = [<<(to_bin(Field))/binary, $:, Order/binary>> || Field<-Sort],
+    Changes = maps:get(sort_fields, Opts, #{}),
+    Fields = lists:map(
+        fun(Field) ->
+            Field1 = to_bin(Field),
+            Field2 = case maps:find(Field1, Changes) of
+                {ok, Ch} -> to_bin(Ch);
+                error -> Field1
+            end,
+            <<Field2/binary, $:, Order/binary>>
+        end,
+        Sort),
     [<<"&sort=", (nklib_util:bjoin(Fields))/binary>>];
 
 list_get_sort(_) ->
