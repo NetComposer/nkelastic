@@ -84,7 +84,7 @@ plugin_start(Config, #{id:=SrvId, config_nkelastic:=Elastic}) ->
         worker,
         [nkelastic_srv]
     },
-    case nkservice_srv_user_sup:start_child(SrvId, Spec) of
+    case nkservice_srv:start_proc(SrvId, Spec) of
     	{ok, _} ->
     		{ok, Config};
     	{error, Error} ->
