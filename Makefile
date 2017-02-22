@@ -1,67 +1,64 @@
-REPO ?= nkelastic
-RELOADER ?= -s nklib_reloader
+APP = nkdomain
+REBAR = rebar3
+
+.PHONY: rel stagedevrel package version all tree shell
+
+all: version compile
 
 
-.PHONY: deps release
+version:
+	@echo "$(shell git symbolic-ref HEAD 2> /dev/null | cut -b 12-)-$(shell git log --pretty=format:'%h, %ad' -1)" > $(APP).version
 
-all: deps compile
+
+version_header: version
+	@echo "-define(VERSION, <<\"$(shell cat $(APP).version)\">>)." > include/$(APP)_version.hrl
+
+
+clean:
+	$(REBAR) clean
+
+
+rel:
+	$(REBAR) release
+
 
 compile:
-	./rebar compile
+	$(REBAR) compile
 
-cnodeps:
-	./rebar compile skip_deps=true
 
-deps:
-	./rebar get-deps
+tests:
+	$(REBAR) eunit
 
-clean: 
-	./rebar clean
 
-distclean: clean
-	./rebar delete-deps
+dialyzer:
+	$(REBAR) dialyzer
 
-tests: compile eunit
 
-eunit:
-	export ERL_FLAGS="-config test/app.config -args_file test/vm.args"; \
-	./rebar eunit skip_deps=true
+xref:
+	$(REBAR) xref
 
-shell:
-	erl -config util/shell_app.config -args_file util/shell_vm.args -s nkelastic_app $(RELOADER)
 
-shell2:
-	erl -config util/shell_app.config -args_file util/shell_vm.args $(RELOADER)
+upgrade:
+	$(REBAR) upgrade
+	make tree
+
+
+update:
+	$(REBAR) update
+
+
+tree:
+	$(REBAR) tree | grep -v '=' | sed 's/ (.*//' > tree
+
+
+tree-diff: tree
+	git diff test -- tree
 
 
 docs:
-	./rebar skip_deps=true doc
+	$(REBAR) edoc
 
 
-APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
-	xmerl webtool snmp public_key mnesia eunit syntax_tools compiler
-COMBO_PLT = $(HOME)/.$(REPO)_combo_dialyzer_plt
+shell:
+	$(REBAR) shell --config config/shell.config --name $(APP)@127.0.0.1 --setcookie nk --apps $(APP)
 
-check_plt: 
-	dialyzer --check_plt --plt $(COMBO_PLT) --apps $(APPS) deps/*/ebin
-
-build_plt: 
-	dialyzer --build_plt --output_plt $(COMBO_PLT) --apps $(APPS) deps/*/ebin
-
-dialyzer:
-	dialyzer -Wno_return --plt $(COMBO_PLT) ebin/nkelastic*.beam #| \
-	    # fgrep -v -f ./dialyzer.ignore-warnings
-
-cleanplt:
-	@echo 
-	@echo "Are you sure?  It takes about 1/2 hour to re-build."
-	@echo Deleting $(COMBO_PLT) in 5 seconds.
-	@echo 
-	sleep 5
-	rm $(COMBO_PLT)
-
-
-build_tests:
-	erlc -pa ebin -pa deps/lager/ebin -o ebin -I include \
-	+export_all +debug_info +"{parse_transform, lager_transform}" \
-	test/*.erl

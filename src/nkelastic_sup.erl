@@ -29,8 +29,6 @@
 -include("nkelastic.hrl").
 
 
-
-
 %% @private
 -spec start_link() ->
     {ok, pid()}.
