@@ -290,7 +290,7 @@ url_search(Id, Index, Type, Str) ->
         from => integer(),
         sort_by => [Field::binary()],
         sort_order => asc | desc,
-        sort_fields => #{atom() => atom()}   %% Change the sorting field
+        sort_fields => #{binary() => binary()}   %% Change the sorting field
     }.
 
 
