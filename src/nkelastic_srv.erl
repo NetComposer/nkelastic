@@ -100,13 +100,22 @@ request(Srv, Method, Path, Body) ->
     			_ ->
     				ok
     		end,
-    		{error, {es_error, Type, Reason}};
+    		{error, get_error(Type, Reason)};
         {error, {http_code, 404, #{<<"found">>:=false}}, _Debug} ->
-        	{error, {<<"obj_not_found">>, <<"Object not found">>}};
+        	{error, object_not_found};
         {error, Error, _Debug} ->
     		?LLOG(warning, "unrecognized error: ~p", [Error]),
             {error, elastic_error}
     end.
+
+
+%% @private
+get_error(<<"index_not_found_exception">>, _Reason) ->
+    index_not_found;
+
+get_error(Type, Reason) ->
+    lager:notice("ES error: ~s, ~s", [Type, Reason]),
+    {es_error, Type}.
 
 
 %% @private

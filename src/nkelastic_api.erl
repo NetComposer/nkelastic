@@ -159,7 +159,7 @@ update_analysis(Id, Index, Opts) ->
 %% Options
 update_or_create_index(Id, Index, Opts) ->
     case update_index(Id, Index, Opts) of
-        {error, {es_error, <<"index_not_found_exception">>, _}} ->
+        {error, index_not_found} ->
             lager:notice("NkELASTIC: Index ~s not found, creating it", [Index]),
             create_index(Id, Index, Opts);
         Other ->
