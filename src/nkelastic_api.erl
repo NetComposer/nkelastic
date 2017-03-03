@@ -182,7 +182,7 @@ update_or_create_index(Id, Index, Opts) ->
 add_mapping(Id, Index, Type, Mappings) ->
     {Metas, Props} = extract_mappings(Mappings),
     Body = Metas#{properties=>Props},
-    request(Id, put, [Index, "/", Type, "/_mapping"], Body).
+    request(Id, put, [Index, "/", to_bin(Type), "/_mapping"], Body).
 
 
 %% @doc Get all indices and their aliases
@@ -225,7 +225,7 @@ get_aliases(Id, Index) ->
 	ok | {error, term()}.
 
 add_alias(Id, Index, Name, Opts) ->
-    request(Id, put, [Index, "/_aliases/", Name], Opts).
+    request(Id, put, [Index, "/_aliases/", to_bin(Name)], Opts).
 
 
 %% @doc Removes an alias from an index
@@ -233,7 +233,7 @@ add_alias(Id, Index, Name, Opts) ->
 	ok | {error, term()}.
 
 delete_alias(Id, Index, Name) ->
-    request(Id, delete, [Index, "/_alias/", Name]).
+    request(Id, delete, [Index, "/_alias/", to_bin(Name)]).
 
 
 %% @doc Gets an object by id
@@ -241,7 +241,7 @@ delete_alias(Id, Index, Name) ->
 	{ok, map(), integer()} | {error, term()}.
 
 get(Id, Index, Type, ObjId) ->
-    case request(Id, get, [Index, "/", Type, "/", ObjId]) of
+    case request(Id, get, [Index, "/", to_bin(Type), "/", ObjId]) of
     	{ok, #{
     		<<"_source">> := Src,
     		<<"_version">> := Vsn
@@ -257,7 +257,7 @@ get(Id, Index, Type, ObjId) ->
 	{ok, integer()} | {error, term()}.
 
 put(Id, Index, Type, ObjId, Obj) ->
-    case request_data(Id, put, [Index, "/", Type, "/", ObjId], Obj) of
+    case request_data(Id, put, [Index, "/", to_bin(Type), "/", ObjId], Obj) of
     	{ok, #{<<"_version">>:=Vsn}} -> {ok, Vsn};
     	{error, Error} -> {error, Error}
     end.
@@ -268,7 +268,7 @@ put(Id, Index, Type, ObjId, Obj) ->
 	ok | {error, term()}.
 
 delete(Id, Index, Type, ObjId) ->
-    request(Id, delete, [Index, "/", Type, "/", ObjId]).
+    request(Id, delete, [Index, "/", to_bin(Type), "/", ObjId]).
 
 
 %% @doc Gets all objects having a type
@@ -277,7 +277,7 @@ delete(Id, Index, Type, ObjId) ->
 
 delete_all(Id, Index, Type) ->
     Body = #{query=>#{match_all=>#{}}},
-    request(Id, post, [Index, "/", Type, "/_delete_by_query"], Body).
+    request(Id, post, [Index, "/", to_bin(Type), "/_delete_by_query"], Body).
 
 
 %% @doc Url search
@@ -285,7 +285,7 @@ delete_all(Id, Index, Type) ->
 	{ok, integer(), [map()]} | {error, term()}.
 
 url_search(Id, Index, Type, Str) ->
-    case request(Id, get, [Index, "/", Type, "/_search", Str]) of
+    case request(Id, get, [Index, "/", to_bin(Type), "/_search", Str]) of
         {ok, #{<<"hits">>:=#{<<"total">>:=Total, <<"hits">>:=Hits}}} ->
             {ok, Total, Hits};
         {error, Error} ->
