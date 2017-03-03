@@ -23,10 +23,11 @@
 -module(nkelastic_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_config/2, 
-		 plugin_start/2, plugin_stop/2]).
+-export([elastic_get_indices/2, elastic_get_mappings/3, elastic_get_aliases/3]).
+-export([plugin_deps/0, plugin_syntax/0, plugin_config/2,
+         plugin_start/2, plugin_stop/2, service_init/2]).
 -export([error_reason/2]).
--export([api_server_cmd/2, api_server_syntax/4]).
+%%-export([api_server_cmd/2, api_server_syntax/4]).
 
 -include("nkelastic.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
@@ -39,6 +40,40 @@
 
 % -type continue() :: continue | {continue, list()}.
 
+
+
+
+%% ===================================================================
+%% Offered callbacks
+%% ===================================================================
+
+-type index_map() :: #{Index::binary() => map()}.
+-type type_map() :: #{Type::binary() => map()}.
+-type alias_map() :: #{Name::binary() => map()}.
+
+
+%% @doc Will be called on plugin start to get indices to create or update
+-spec elastic_get_indices(index_map(), nkservice:service()) ->
+    {ok, index_map()}.
+
+elastic_get_indices(Acc, _Service) ->
+    {ok, Acc}.
+
+
+%% @doc Will be called on plugin start to get mappings to create or update
+-spec elastic_get_mappings(Index::binary(), type_map(), nkservice:service()) ->
+    {ok, type_map()}.
+
+elastic_get_mappings(_Index, Acc, _Service) ->
+    {ok, Acc}.
+
+
+%% @doc Will be called on plugin start to get aliases
+-spec elastic_get_aliases(Index::binary, alias_map(), nkservice:service()) ->
+    {ok, alias_map()}.
+
+elastic_get_aliases(_Index, Acc, _Service) ->
+    {ok, Acc}.
 
 
 %% ===================================================================
@@ -96,6 +131,16 @@ plugin_stop(Config, _Service) ->
 	{ok, Config}.
 
 
+service_init(#{id:=Id}=Service, State) ->
+    case nkelastic_util:create_service_indices(Service) of
+        ok ->
+            {ok, State};
+        {error, Error} ->
+            lager:error("NkELASTIC: Could not create indices for ~p: ~p", [Id, Error]),
+            {stop, nkelastic_create_indices}
+    end.
+
+
 
 %% ===================================================================
 %% Error Codes
@@ -117,20 +162,20 @@ error_reason(_Lang, _Error) ->
 %% API Server Callbacks
 %% ===================================================================
 
-%% @private
-api_server_cmd(#api_req{class=elastic, subclass=Sub, cmd=Cmd}=Req, State) ->
-	nkelastic_api:cmd(Cmd, Sub, Req, State);
-
-api_server_cmd(_Req, _State) ->
-	continue.
-
-
-%% @private
-api_server_syntax(#api_req{class=elastic, subclass=Sub, cmd=Cmd}, 
-		   		  Syntax, Defaults, Mandatory) ->
-	nkelastic_api_syntax:syntax(Cmd, Sub, Syntax, Defaults, Mandatory);
-	
-api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
-	continue.
+%%%% @private
+%%api_server_cmd(#api_req{class=elastic, subclass=Sub, cmd=Cmd}=Req, State) ->
+%%	nkelastic_api:cmd(Cmd, Sub, Req, State);
+%%
+%%api_server_cmd(_Req, _State) ->
+%%	continue.
+%%
+%%
+%%%% @private
+%%api_server_syntax(#api_req{class=elastic, subclass=Sub, cmd=Cmd},
+%%		   		  Syntax, Defaults, Mandatory) ->
+%%	nkelastic_api_syntax:syntax(Cmd, Sub, Syntax, Defaults, Mandatory);
+%%
+%%api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
+%%	continue.
 
 

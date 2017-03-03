@@ -26,7 +26,7 @@
 -export([health/1, get_nodes/1]).
 -export([list_indices/1, get_indices/1, get_index/2]).
 -export([get_count/1, get_count/2]).
--export([create_index/3, delete_index/2, update_index/3]).
+-export([create_index/3, delete_index/2, update_index/3, update_or_create_index/3]).
 -export([update_analysis/3, add_mapping/4]).
 -export([get_aliases/1, get_aliases/2, add_alias/4, delete_alias/3]).
 -export([get/4, put/5, delete/4, delete_all/3]).
@@ -118,15 +118,13 @@ get_count(Id, Index) ->
 %% @doc Creates an index
 %% Name: letters, numbers, ".,-&_"
 %% Options: number_of_shards, number_of_replicas, index_refresh_interval
+%% Also aliases (#{aliases => #{alias1 => #{}})
+%% and mappings (#{mappings => #{type1 => #{properties => ...}}})
 -spec create_index(id(), index(), map()) ->
 	ok | {error, error()}.
 
 create_index(Id, Index, Opts) ->
-    Body = #{
-        settings => #{
-            index => Opts
-        }
-    },
+    Body = index_params(Opts),
     request(Id, put, Index, Body).
 
 
@@ -157,6 +155,18 @@ update_analysis(Id, Index, Opts) ->
     request(Id, put, [Index, "/_settings"], Body).
 
 
+%% @doc Tries to update an index, or create it
+%% Options
+update_or_create_index(Id, Index, Opts) ->
+    case update_index(Id, Index, Opts) of
+        {error, {es_error, <<"index_not_found_exception">>, _}} ->
+            lager:notice("NkELASTIC: Index ~s not found, creating it", [Index]),
+            create_index(Id, Index, Opts);
+        Other ->
+            Other
+    end.
+
+
 %% @doc Set a mapping
 %% https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping.html
 %% Sample:
@@ -164,7 +174,8 @@ update_analysis(Id, Index, Opts) ->
 %%    '_all' => #{disabled=>true},
 %%    id => #{type=>string, store=>yes, index=>not_analyzed}
 %%}
-%% Metafields: https://www.elastic.co/guide/en/elasticsearch/reference/current/mappnkseing-fields.html
+%% Metafields: https://www.elastic.co/guide/en/elasticsearch/
+%%                     reference/current/mappnkseing-fields.html
 -spec add_mapping(id(), index(), type(), map()) ->
 	ok | {error, term()}.
 
@@ -373,6 +384,26 @@ spanish_ascii_analyzer() ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
+
+-compile(export_all).
+index_params(Opts) ->
+    List = [
+        {settings, #{index => maps:without([mappings, aliases], Opts)}},
+        case maps:find(mappings, Opts) of
+            {ok, Mappings} ->
+                {mappings, Mappings};
+            error ->
+                []
+        end,
+        case maps:find(aliases, Opts) of
+            {ok, Aliases} ->
+                {aliases, Aliases};
+            error ->
+                []
+        end
+    ],
+    maps:from_list(lists:flatten(List)).
+
 
 
 %% @private
