@@ -285,7 +285,11 @@ delete_all(Id, Index, Type) ->
 	{ok, integer(), [map()]} | {error, term()}.
 
 url_search(Id, Index, Type, Str) ->
-    case request(Id, get, [Index, "/", to_bin(Type), "/_search", Str]) of
+    Url = case Type of
+        <<"*">> -> [Index, "/_search", Str];
+        _ -> [Index, "/", to_bin(Type), "/_search", Str]
+    end,
+    case request(Id, get, Url) of
         {ok, #{<<"hits">>:=#{<<"total">>:=Total, <<"hits">>:=Hits}}} ->
             {ok, Total, Hits};
         {error, Error} ->
@@ -385,7 +389,6 @@ spanish_ascii_analyzer() ->
 %% Internal
 %% ===================================================================
 
--compile(export_all).
 index_params(Opts) ->
     List = [
         {settings, #{index => maps:without([mappings, aliases], Opts)}},
