@@ -241,7 +241,7 @@ handle_info(check_cluster, State) ->
     case do_request(get, "_cluster/health", <<>>, State) of
         {ok, Data, _Debug} ->
 			#{
-				<<"number_of_data_nodes">> := Nodes, 
+				<<"number_of_data_nodes">> := Nodes,
 				<<"status">> := Status
 			} = Data,
             case Status of
@@ -344,7 +344,12 @@ do_request(Method, Path, Body, State) ->
                 <<"application/json", _/binary>> ->
                     nklib_json:decode(RespBody);
                 _ ->
-                    RespBody
+                    case nklib_util:get_value(<<"content-type">>, RespHds) of
+                        <<"application/json", _/binary>> ->
+                            nklib_json:decode(RespBody);
+                        _ ->
+                            RespBody
+                    end
             end,
             case Path of
                 "_cluster/health" -> 
