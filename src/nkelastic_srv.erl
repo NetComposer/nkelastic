@@ -251,7 +251,7 @@ handle_info(check_cluster, State) ->
                 _ ->
                     ?LLOG(warning, "cluster status: ~s (~p nodes)", [Status, Nodes])
             end;
-        {error, Error} ->
+        {error, Error, _Debug} ->
             ?LLOG(warning, "Error contacting backend: ~p", [Error])
     end,
     erlang:send_after(?CHECK_TIME, self(), check_cluster),
