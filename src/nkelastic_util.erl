@@ -74,7 +74,12 @@ do_create_service_mappings(SrvId, Index, [{Type, Data}|Rest]) ->
 %% @private
 create_service_aliases(SrvId, Index, Service) ->
     {ok, Map} = SrvId:elastic_get_aliases(Index, #{}, Service),
-    do_create_service_aliases(SrvId, Index, maps:to_list(Map)).
+    case do_create_service_aliases(SrvId, Index, maps:to_list(Map)) of
+        ok ->
+            create_service_templates(SrvId, Service);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @private
@@ -85,6 +90,24 @@ do_create_service_aliases(SrvId, Index, [{Name, Data}|Rest]) ->
     case nkelastic_api:add_alias(SrvId, Index, Name, Data) of
         ok ->
             do_create_service_aliases(SrvId, Index, Rest);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+%% @private
+create_service_templates(SrvId, Service) ->
+    {ok, Map} = SrvId:elastic_get_templates(#{}, Service),
+    do_create_service_templates(SrvId, maps:to_list(Map)).
+
+
+%% @private
+do_create_service_templates(_SrvId, []) ->
+    ok;
+
+do_create_service_templates(SrvId, [{Name, Data}|Rest]) ->
+    case nkelastic_api:create_template(SrvId, Name, Data) of
+        ok ->
+            do_create_service_templates(SrvId, Rest);
         {error, Error} ->
             {error, Error}
     end.

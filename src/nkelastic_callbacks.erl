@@ -23,7 +23,7 @@
 -module(nkelastic_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([elastic_get_indices/2, elastic_get_mappings/3, elastic_get_aliases/3]).
+-export([elastic_get_indices/2, elastic_get_mappings/3, elastic_get_aliases/3, elastic_get_templates/2]).
 -export([plugin_deps/0, plugin_syntax/0, plugin_config/2,
          plugin_start/2, plugin_stop/2, service_init/2]).
 -export([error_reason/2]).
@@ -50,6 +50,7 @@
 -type index_map() :: #{Index::binary() => map()}.
 -type type_map() :: #{Type::binary() => map()}.
 -type alias_map() :: #{Name::binary() => map()}.
+-type template_map() :: #{Name::binary() => map()}.
 
 
 %% @doc Will be called on plugin start to get indices to create or update
@@ -73,6 +74,14 @@ elastic_get_mappings(_Index, Acc, _Service) ->
     {ok, alias_map()}.
 
 elastic_get_aliases(_Index, Acc, _Service) ->
+    {ok, Acc}.
+
+
+%% @doc Will be called on plugin start to get templates
+-spec elastic_get_templates(template_map(), nkservice:service()) ->
+    {ok, type_map()}.
+
+elastic_get_templates(Acc, _Service) ->
     {ok, Acc}.
 
 

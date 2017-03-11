@@ -101,7 +101,7 @@ request(Srv, Method, Path, Body) ->
     				ok
     		end,
     		{error, get_error(Type, Reason)};
-        {error, {http_code, 404, #{<<"found">>:=false}}, _Debug} ->
+        {error, {http_code, 404, _}, _Debug} ->
         	{error, object_not_found};
         {error, Error, _Debug} ->
     		?LLOG(warning, "unrecognized error: ~p", [Error]),
@@ -241,7 +241,7 @@ handle_info(check_cluster, State) ->
     case do_request(get, "_cluster/health", <<>>, State) of
         {ok, Data, _Debug} ->
 			#{
-				<<"number_of_data_nodes">> := Nodes,
+				<<"number_of_data_nodes">> := _Nodes,
 				<<"status">> := Status
 			} = Data,
             case Status of
@@ -249,7 +249,8 @@ handle_info(check_cluster, State) ->
                     % ?LLOG(info, "Cluster OK", []),
                     ok;
                 _ ->
-                    ?LLOG(warning, "cluster status: ~s (~p nodes)", [Status, Nodes])
+%%                    ?LLOG(warning, "cluster status: ~s (~p nodes)", [Status, Nodes]),
+                    ok
             end;
         {error, Error, _Debug} ->
             ?LLOG(warning, "Error contacting backend: ~p", [Error])
