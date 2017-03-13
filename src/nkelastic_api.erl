@@ -27,7 +27,7 @@
 -export([list_indices/1, get_indices/1, get_index/2]).
 -export([get_count/1, get_count/2]).
 -export([create_index/3, delete_index/2, update_index/3, update_or_create_index/3]).
--export([get_template/2, create_template/3, delete_template/2]).
+-export([get_template/2, create_template/3, delete_template/2, get_all_templates/1]).
 -export([update_analysis/3, add_mapping/4]).
 -export([get_aliases/1, get_aliases/2, add_alias/4, delete_alias/3]).
 -export([get/4, put/5, delete/4, delete_all/3]).
@@ -187,7 +187,7 @@ delete_template(Id, Name) ->
     request(Id, delete, ["_template/", Name]).
 
 
-%% @doc Deletes an template
+%% @doc Gets a template
 -spec get_template(id(), Name::binary()) ->
     {ok, map()} | {error, error()}.
 
@@ -195,7 +195,17 @@ get_template(Id, Name) ->
     request(Id, get, ["_template/", Name]).
 
 
+%% @doc Gets all templates
+-spec get_all_templates(id()) ->
+    {ok, [binary()]} | {error, error()}.
 
+get_all_templates(Id) ->
+    case request(Id, get, "_template") of
+        {ok, Map} ->
+            {ok, maps:keys(Map)};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Set a mapping
