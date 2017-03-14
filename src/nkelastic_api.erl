@@ -31,8 +31,7 @@
 -export([update_analysis/3, add_mapping/4]).
 -export([get_aliases/1, get_aliases/2, add_alias/4, delete_alias/3]).
 -export([get/4, put/5, delete/4, delete_all/3]).
--export([url_search/4, list/4]).
--export([spanish_ascii_analyzer/0]).
+-export([search/5, count/5, explain/5]).
 
 -type id() :: nkservice:id().
 -type index() :: binary() | string().
@@ -40,7 +39,10 @@
 -type type() :: binary() | string().
 -type error() :: {es_error, binary(), binary()} | term().
 -type status() :: geen | yellow | red.
--type query() :: binary() | string().
+-type query() :: nkelastic_search:query().
+-type search_opts() :: nkelastic_search:search_opts().
+
+
 
 
 % https://www.elastic.co/guide/en/elasticsearch/reference/current/cat.html
@@ -322,108 +324,79 @@ delete_all(Id, Index, Type) ->
     request(Id, post, [Index, "/", to_bin(Type), "/_delete_by_query"], Body).
 
 
-%% @doc Url search
--spec url_search(id(), index(), type(), query()) ->
-	{ok, integer(), [map()]} | {error, term()}.
-
-url_search(Id, Index, Type, Str) ->
-    Url = case Type of
-        <<"*">> -> [Index, "/_search", Str];
-        _ -> [Index, "/", to_bin(Type), "/_search", Str]
-    end,
-    case request(Id, get, Url) of
-        {ok, #{<<"hits">>:=#{<<"total">>:=Total, <<"hits">>:=Hits}}} ->
-            {ok, Total, Hits};
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
--type list_opts() ::
-    #{
-        fields => [binary()],                          %% Special case for [<<"_all">>]
-        filter => #{Key::binary() => Val::binary()},
-        size => integer(),
-        from => integer(),
-        sort_by => [Field::binary()],
-        sort_order => asc | desc,
-        sort_fields => #{binary() => binary()}   %% Change the sorting field
-    }.
+%%%% @doc Url search
+%%-spec url_search(id(), index(), type(), query()) ->
+%%	{ok, integer(), [map()]} | {error, term()}.
+%%
+%%url_search(Id, Index, Type, Str) ->
+%%    Url = case Type of
+%%        <<"*">> -> [Index, "/_search", Str];
+%%        _ -> [Index, "/", to_bin(Type), "/_search", Str]
+%%    end,
+%%    case request(Id, get, Url) of
+%%        {ok, #{<<"hits">>:=#{<<"total">>:=Total, <<"hits">>:=Hits}}} ->
+%%            {ok, Total, Hits};
+%%        {error, Error} ->
+%%            {error, Error}
+%%    end.
 
 
-%% @doc Powerful listing
--spec list(id(), index(), type(), list_opts()) ->
+%% @doc Search
+-spec search(id(), index(), type(), query(), search_opts()) ->
     {ok, integer(), [map()]} | {error, term()}.
 
-list(Id, Index, Type, Opts) ->
-    Source = list_get_source(Opts),
-    Query = case Opts of
-        #{filter:=Filter} when is_map(Filter) -> 
-            list_get_query(maps:to_list(Filter), []);
-        _ -> 
-            <<>>
-    end,
-    From = case Opts of
-        #{from:=F} -> <<"&from=", (to_bin(F))/binary>>;
-        _ -> <<>>
-    end,
-    Size = case Opts of
-        #{size:=S} -> <<"&size=", (to_bin(S))/binary>>;
-        _ -> <<>>
-    end,
-    Sort = list_get_sort(Opts),
-    Str = ["?", Source, Query, From, Size, Sort],
-    case url_search(Id, Index, Type, Str) of
-        {ok, Num, Hits} ->
-            Data = lists:map(
-                fun(#{<<"_id">>:=ObjId}=Hit) ->
-                    FieldMap = maps:get(<<"_source">>, Hit, #{}),
-                    maps:put(<<"_id">>, ObjId, FieldMap)
-                end,
-                Hits),
-            {ok, Num, Data};
+search(Id, Index, Type, Query, Opts) ->
+    case nkelastic_search:parse(Query, Opts) of
+        {ok, Body} ->
+            Url = index_url(search, Index, Type, <<>>),
+            case request(Id, post, Url, Body) of
+                {ok, #{<<"took">>:=Time, <<"hits">>:=#{<<"total">>:=Total, <<"hits">>:=Hits}}} ->
+                    lager:info("Query took ~p msecs", [Time]),
+                    {ok, Total, Hits};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
 
 
+%% @doc Count
+-spec count(id(), index(), type(), query(), search_opts()) ->
+    {ok, integer()} | {error, term()}.
+
+count(Id, Index, Type, Query, Opts) ->
+    case nkelastic_search:parse(Query, Opts) of
+        {ok, Body} ->
+            Url = index_url(count, Index, Type, <<>>),
+            case request(Id, post, Url, Body) of
+                {ok, #{<<"count">>:=Count}} ->
+                    {ok, Count};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
-%% ===================================================================
-%% Util
-%% ===================================================================
+%% @doc Search explain
+-spec explain(id(), index(), type(), query(), search_opts()) ->
+    {ok, integer()} | {error, term()}.
 
-
-spanish_ascii_analyzer() -> 
-    #{
-        analyzer => #{
-            spanish_ascii => #{
-                tokenizer => standard,
-                filter => [
-                    lowercase, 
-                    asciifolding, 
-                    spanish_stop, 
-                    % spanish_keywords, 
-                    spanish_stemmer]
-            }
-        },
-        filter => #{
-            spanish_stop => #{
-                type => stop,
-                stopwords => <<"_spanish_">>
-            },
-            % spanish_keywords => #{
-            %     type => keyword_marker
-            %     keywords => [] 
-            % },
-            spanish_stemmer => #{
-                type => stemmer,
-                language => light_spanish
-            }
-        }
-    }.
-
-
+explain(Id, Index, Type, Query, Opts) ->
+    case nkelastic_search:parse(Query, Opts) of
+        {ok, Body} ->
+            Url = index_url(explain, Index, Type, <<>>),
+            case request(Id, post, Url, Body) of
+                {ok, Data} ->
+                    {ok, Data};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 
@@ -490,14 +463,6 @@ request_data(Id, Method, Path, Body) ->
     nkelastic_srv:request(Id, Method, Path, Body).
 
 
-% %% @private
-% request_single(Id, Method, Path) ->
-%     case request_data(Id, Method, Path, <<>>) of
-%         {ok, [Term]} -> {ok, Term};
-%         {error, Error} -> {error, Error}
-%     end.
-
-
 %% @private
 request_lines(Id, Method, Path) ->
     case request_data(Id, Method, Path, <<>>) of
@@ -510,60 +475,18 @@ request_lines(Id, Method, Path) ->
     end.
 
 
-% %% @private
-% split(Bin) ->
-%     binary:split(Bin, <<" ">>, [global]).
+%% @private
+index_url(Op, Index, Type, Str) ->
+    case Type of
+        <<>> ->    [Index, "/_", to_bin(Op), Str];
+        <<"*">> -> [Index, "/_", to_bin(Op), Str];
+        _ ->       [Index, "/", to_bin(Type), "/_", to_bin(Op), Str]
+    end.
 
-
-% %% @private
-% pre_index(all) -> [];
-% pre_index(Index) -> [Index, "/"].
 
 %% @private
 post_index(all) -> [];
 post_index(Index) -> ["/", Index].
-
-%% @private
-list_get_source(#{fields:=[<<"_all">>]}) ->
-    <<"&_source=true">>;
-
-list_get_source(#{fields:=Fields}) when is_list(Fields) ->
-    <<"&_source_includes=", (nklib_util:bjoin(Fields))/binary>>;
-
-list_get_source(_) ->
-    <<"&_source=false">>.
-
-
-%% @private
-list_get_query([], []) ->
-    [];
-
-list_get_query([], Acc) ->
-    [<<"&default_operator=AND&q=">>, Acc];
-
-list_get_query([{Field, Value}|Rest], Acc) ->
-    Term = <<"+", (to_bin(Field))/binary, $:, (to_bin(Value))/binary>>,
-    list_get_query(Rest, [Term|Acc]).
-   
-
-%% @private
-list_get_sort(#{sort_by:=Sort}=Opts) when is_list(Sort), length(Sort)>0 ->
-    Order = to_bin(maps:get(sort_order, Opts, asc)),
-    Changes = maps:get(sort_fields, Opts, #{}),
-    Fields = lists:map(
-        fun(Field) ->
-            Field1 = to_bin(Field),
-            Field2 = case maps:find(Field1, Changes) of
-                {ok, Ch} -> to_bin(Ch);
-                error -> Field1
-            end,
-            <<Field2/binary, $:, Order/binary>>
-        end,
-        Sort),
-    [<<"&sort=", (nklib_util:bjoin(Fields))/binary>>];
-
-list_get_sort(_) ->
-    [].
 
 
 %% @private
