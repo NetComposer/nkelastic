@@ -343,16 +343,26 @@ delete_all(Id, Index, Type) ->
 
 %% @doc Search
 -spec search(id(), index(), type(), query(), search_opts()) ->
-    {ok, integer(), [map()]} | {error, term()}.
+    {ok, integer(), Obj::[map()], Aggs::map(), Meta::map()} | {error, term()}.
 
 search(Id, Index, Type, Query, Opts) ->
     case nkelastic_search:parse(Query, Opts) of
         {ok, Body} ->
             Url = index_url(search, Index, Type, <<>>),
             case request(Id, post, Url, Body) of
-                {ok, #{<<"took">>:=Time, <<"hits">>:=#{<<"total">>:=Total, <<"hits">>:=Hits}}} ->
+                {ok, Reply} ->
+                    #{
+                        <<"took">> := Time,
+                        <<"timed_out">> := TimedOut,
+                        <<"hits">>:= #{
+                            <<"total">>:=Total, <<"hits">>:=Hits
+                        }
+                    } = Reply,
                     lager:info("Query took ~p msecs", [Time]),
-                    {ok, Total, Hits};
+                    lager:info("~s", [nklib_json:encode_pretty(Reply)]),
+                    Aggs = maps:get(<<"aggregations">>, Reply, #{}),
+                    Meta = #{time=>Time, timeout=>TimedOut},
+                    {ok, Total, Hits, Aggs, Meta};
                 {error, Error} ->
                     {error, Error}
             end;

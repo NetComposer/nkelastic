@@ -39,7 +39,8 @@
         size => integer(),
         fields => [binary()],                            %% "_all" for all
         sort => atom() | binary() | #{atom()|binary() => search_sort_opts()},
-        sort_fields_map => #{atom() | binary() => atom() | binary()}
+        sort_fields_map => #{atom() | binary() => atom() | binary()},
+        aggs => map()
     }.
 
 
@@ -64,10 +65,22 @@
 parse(Query, Opts) ->
     Meta = maps:with([sort_fields_map], Opts),
     case nklib_syntax:parse(Opts, opts_syntax(), Meta) of
-        {ok, Opts2, _, _} ->
-            Opts3 = set_defaults_opts(Opts2),
-            lager:info("Search opts: ~p", [Opts3]),
-            {ok, Opts3#{query=>Query}};
+        {ok, Body1, _, _} ->
+            Body2 = set_defaults_opts(Body1),
+            Body3 = case is_map(Query) of
+                true ->
+                    Body2#{query=>Query};
+                false ->
+                    Body2
+            end,
+            Body4 = case Opts of
+                #{aggs:=Aggs} when is_map(Aggs) ->
+                    Body3#{aggs=>Aggs};
+                _ ->
+                    Body3
+            end,
+            lager:info("Search body: ~p", [Body4]),
+            {ok, Body4};
         {error, Error} ->
             {error, Error}
     end.
@@ -121,7 +134,8 @@ opts_syntax() ->
         size => {integer, 0, none},
         sort => fun ?MODULE:fun_syntax/3,
         fields => fun ?MODULE:fun_syntax/3,
-        sort_fields_map => ignore
+        sort_fields_map => ignore,
+        aggs => ignore
     }.
 
 
