@@ -103,6 +103,9 @@ request(Srv, Method, Path, Body) ->
     		{error, get_error(Type, Reason)};
         {error, {http_code, 404, _}, _Debug} ->
         	{error, object_not_found};
+        {error, {http_code, 400, R}, _Debug} ->
+            ?LLOG(notice, "invalid request: ~p", [R]),
+            {error, internal_error};
         {error, Error, _Debug} ->
     		?LLOG(warning, "unrecognized error: ~p", [Error]),
             {error, elastic_error}

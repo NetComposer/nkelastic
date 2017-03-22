@@ -23,7 +23,7 @@
 -module(nkelastic_search).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export_type([query/0, search_opts/0, search_sort_opts/0]).
--export([parse/2]).
+-export([parse/2, syntax/0]).
 -export([spanish_ascii_analyzer/0]).
 -export([fun_syntax/3]).
 
@@ -46,7 +46,7 @@
 
 -type search_sort_opts() ::
     #{
-        sort => asc | desc,
+        order => asc | desc,
         mode => min | max | sum | avg | median,
         missing => binary()                             %% _last, _first
     }.
@@ -64,7 +64,7 @@
 
 parse(Query, Opts) ->
     Meta = maps:with([sort_fields_map], Opts),
-    case nklib_syntax:parse(Opts, opts_syntax(), Meta) of
+    case nklib_syntax:parse(Opts, syntax(), Meta) of
         {ok, Body1, _, _} ->
             Body2 = set_defaults_opts(Body1),
             Body3 = case is_map(Query) of
@@ -85,6 +85,17 @@ parse(Query, Opts) ->
             {error, Error}
     end.
 
+
+%% @doc
+syntax() ->
+    #{
+        from => {integer, 0, none},
+        size => {integer, 0, none},
+        sort => fun ?MODULE:fun_syntax/3,
+        fields => fun ?MODULE:fun_syntax/3,
+        sort_fields_map => ignore,
+        aggs => ignore
+    }.
 
 
 %% ===================================================================
@@ -126,17 +137,6 @@ spanish_ascii_analyzer() ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-%% @private
-opts_syntax() ->
-    #{
-        from => {integer, 0, none},
-        size => {integer, 0, none},
-        sort => fun ?MODULE:fun_syntax/3,
-        fields => fun ?MODULE:fun_syntax/3,
-        sort_fields_map => ignore,
-        aggs => ignore
-    }.
 
 
 %% @private
@@ -186,7 +186,9 @@ fun_syntax_sort([Map|Rest], Meta, Acc) when is_map(Map) ->
         [{Field, Data}] ->
             Syntax = sort_syntax(),
             case nklib_syntax:parse(Data, Syntax) of
-                {ok, Parsed, _, _} ->
+                {ok, _, _, [UnkField|_]} ->
+                    {error, {syntax_error, <<"sort.", UnkField/binary>>}};
+                {ok, Parsed, _, []} ->
                     Name = syntax_sort_map(to_bin(Field), Meta),
                     fun_syntax_sort(Rest, Meta, [#{Name=>Parsed}|Acc]);
                 {error, _} ->
