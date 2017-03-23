@@ -116,6 +116,9 @@ request(Srv, Method, Path, Body) ->
 get_error(<<"index_not_found_exception">>, _Reason) ->
     index_not_found;
 
+get_error(<<"search_phase_execution_exception">>, _Reason) ->
+    search_error;
+
 get_error(Type, Reason) ->
     lager:notice("ES error: ~s, ~s", [Type, Reason]),
     {es_error, Type}.

@@ -30,7 +30,7 @@
 -export([get_template/2, create_template/3, delete_template/2, get_all_templates/1]).
 -export([update_analysis/3, add_mapping/4]).
 -export([get_aliases/1, get_aliases/2, add_alias/4, delete_alias/3]).
--export([get/4, put/5, delete/4, delete_all/3]).
+-export([get/4, put/5, delete/4, delete_by_query/4, delete_all/3]).
 -export([search/5, count/5, explain/5]).
 
 -type id() :: nkservice:id().
@@ -149,7 +149,7 @@ update_index(Id, Index, Opts) ->
     request(Id, put, [Index, "/_settings"], Body).
 
 
-%% @doc Updates analisis
+%% @doc Updates analysis
 -spec update_analysis(id(), index(), map()) ->
 	ok | {error, error()}.
 
@@ -307,7 +307,7 @@ put(Id, Index, Type, ObjId, Obj) ->
     end.
 
 
-%% @doc Gets an object by id
+%% @doc Deletes an object by id
 -spec delete(id(), index(), type(), obj_id()) ->
 	ok | {error, term()}.
 
@@ -315,30 +315,21 @@ delete(Id, Index, Type, ObjId) ->
     request(Id, delete, [Index, "/", to_bin(Type), "/", ObjId]).
 
 
+%% @doc Deletes all objects from a query
+-spec delete_by_query(id(), index(), type(), map()) ->
+    {ok, map()} | {error, term()}.
+
+delete_by_query(Id, Index, Type, Query) ->
+    Url =  index_url(delete_by_query, Index, Type, <<>>),
+    request(Id, post, Url, #{query=>Query}).
+
+
 %% @doc Gets all objects having a type
 -spec delete_all(id(), index(), type()) ->
-	ok | {error, term()}.
+    {ok, map()} | {error, term()}.
 
 delete_all(Id, Index, Type) ->
-    Body = #{query=>#{match_all=>#{}}},
-    request(Id, post, [Index, "/", to_bin(Type), "/_delete_by_query"], Body).
-
-
-%%%% @doc Url search
-%%-spec url_search(id(), index(), type(), query()) ->
-%%	{ok, integer(), [map()]} | {error, term()}.
-%%
-%%url_search(Id, Index, Type, Str) ->
-%%    Url = case Type of
-%%        <<"*">> -> [Index, "/_search", Str];
-%%        _ -> [Index, "/", to_bin(Type), "/_search", Str]
-%%    end,
-%%    case request(Id, get, Url) of
-%%        {ok, #{<<"hits">>:=#{<<"total">>:=Total, <<"hits">>:=Hits}}} ->
-%%            {ok, Total, Hits};
-%%        {error, Error} ->
-%%            {error, Error}
-%%    end.
+    delete_by_query(Id, Index, Type, #{match_all=>#{}}).
 
 
 %% @doc Search
@@ -348,7 +339,7 @@ delete_all(Id, Index, Type) ->
 search(Id, Index, Type, Query, Opts) ->
     case nkelastic_search:parse(Query, Opts) of
         {ok, Body} ->
-            Url = index_url(search, Index, Type, <<>>),
+            Url =  index_url(search, Index, Type, <<>>),
             case request(Id, post, Url, Body) of
                 {ok, Reply} ->
                     #{
