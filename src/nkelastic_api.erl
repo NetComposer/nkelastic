@@ -31,7 +31,7 @@
 -export([update_analysis/3, add_mapping/4]).
 -export([get_aliases/1, get_aliases/2, add_alias/4, delete_alias/3]).
 -export([get/4, put/5, delete/4, delete_by_query/4, delete_all/3]).
--export([search/5, count/5, explain/5]).
+-export([search/5, count/5, explain/5, iterate_start/5, iterate_next/2, iterate_fun/7]).
 
 -type id() :: nkservice:id().
 -type index() :: binary() | string().
@@ -349,8 +349,8 @@ search(Id, Index, Type, Query, Opts) ->
                             <<"total">>:=Total, <<"hits">>:=Hits
                         }
                     } = Reply,
-                    lager:info("Query took ~p msecs", [Time]),
-                    lager:info("~s", [nklib_json:encode_pretty(Reply)]),
+                    %% lager:info("Query took ~p msecs", [Time]),
+                    %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
                     Aggs = maps:get(<<"aggregations">>, Reply, #{}),
                     Meta = #{time=>Time, timeout=>TimedOut},
                     {ok, Total, Hits, Aggs, Meta};
@@ -400,6 +400,80 @@ explain(Id, Index, Type, Query, Opts) ->
     end.
 
 
+%% @doc Iterate
+-spec iterate_start(id(), index(), type(), query(), search_opts()) ->
+    {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
+
+iterate_start(Id, Index, Type, Query, Opts) ->
+    case nkelastic_search:parse(Query, Opts) of
+        {ok, Body} ->
+            Url =  index_url(search, Index, Type, <<"?scroll=1m">>),
+            case request(Id, post, Url, Body) of
+                {ok, Reply} ->
+                    #{
+                        <<"_scroll_id">> := ScrollId,
+                        <<"took">> := Time,
+                        <<"timed_out">> := TimedOut,
+                        <<"hits">>:= #{
+                            <<"total">>:=Total, <<"hits">>:=Hits
+                        }
+                    } = Reply,
+                    %% lager:info("Query took ~p msecs", [Time]),
+                    %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
+                    Meta = #{time=>Time, timeout=>TimedOut},
+                    {ok, ScrollId, Total, Hits, Meta};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+%% @doc Search
+-spec iterate_next(id(), binary()) ->
+    {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
+
+iterate_next(Id, ScrollId) ->
+    Body = #{scroll => <<"1m">>, scroll_id=>ScrollId},
+    case request(Id, post, <<"_search/scroll">>, Body) of
+        {ok, Reply} ->
+            #{
+                <<"_scroll_id">> := ScrollId2,
+                <<"took">> := Time,
+                <<"timed_out">> := TimedOut,
+                <<"hits">>:= #{
+                    <<"total">>:=Total, <<"hits">>:=Hits
+                }
+            } = Reply,
+            %% lager:info("Query took ~p msecs", [Time]),
+            %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
+            Meta = #{time=>Time, timeout=>TimedOut},
+            {ok, ScrollId2, Total, Hits, Meta};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Iterate
+-spec iterate_fun(id(), index(), type(), query(), search_opts(),
+                  fun((map(), term()) -> term()), term()) ->
+    {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
+
+iterate_fun(Id, Index, Type, Query, Opts, Fun, Acc0) ->
+    case iterate_start(Id, Index, Type, Query, Opts) of
+        {ok, _ScrollId, _N, [], _} ->
+            {ok, Acc0};
+        {ok, ScrollId, _N, Objs, _} ->
+            Acc2 = lists:foldl(
+                fun(Obj, Acc) -> iterate_fun_process(Obj, Fun, Acc) end,
+                Acc0,
+                Objs
+            ),
+            iterate_fun2(Id, ScrollId, Fun, Acc2);
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 %% ===================================================================
 %% Internal
@@ -443,6 +517,30 @@ extract_mappings([{Key, Val}|Rest], Metas, Prop) ->
         B ->
             extract_mappings(Rest, Metas, [{B, Val}|Prop])
     end.
+
+
+%% @private
+iterate_fun2(Id, ScrollId, Fun, Acc0) ->
+    case iterate_next(Id, ScrollId) of
+        {ok, _ScrollId2, _N, [], _} ->
+            {ok, Acc0};
+        {ok, ScrollId2, _N, Objs, _} ->
+            Acc2 = lists:foldl(
+                fun(Obj, Acc) -> iterate_fun_process(Obj, Fun, Acc) end,
+                Acc0,
+                Objs
+            ),
+            iterate_fun2(Id, ScrollId2, Fun, Acc2);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+iterate_fun_process(#{<<"_id">>:=ObjId}=Data, Fun, Acc) ->
+    Base = maps:get(<<"_source">>, Data, #{}),
+    Obj = Base#{<<"obj_id">>=>ObjId},
+    Fun(Obj, Acc).
 
 
 %% @private
