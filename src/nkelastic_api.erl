@@ -30,7 +30,7 @@
 -export([get_template/2, create_template/3, delete_template/2, get_all_templates/1]).
 -export([update_analysis/3, add_mapping/4]).
 -export([get_aliases/1, get_aliases/2, add_alias/4, delete_alias/3]).
--export([get/4, put/5, put_and_wait/5, delete/4, delete_by_query/4, delete_all/3]).
+-export([get/4, put/5, put_and_wait/5, delete/4, delete_and_wait/4, delete_by_query/4, delete_all/3]).
 -export([search/5, count/5, explain/5, iterate_start/5, iterate_next/2, iterate_fun/7]).
 
 -type id() :: nkservice:id().
@@ -324,6 +324,14 @@ put_and_wait(Id, Index, Type, ObjId, Obj) ->
 
 delete(Id, Index, Type, ObjId) ->
     request(Id, delete, [Index, "/", to_bin(Type), "/", ObjId]).
+
+
+%% @doc Deletes an object by id
+-spec delete_and_wait(id(), index(), type(), obj_id()) ->
+    ok | {error, term()}.
+
+delete_and_wait(Id, Index, Type, ObjId) ->
+    request(Id, delete, [Index, "/", to_bin(Type), "/", ObjId, "?refresh=true"]).
 
 
 %% @doc Deletes all objects from a query
