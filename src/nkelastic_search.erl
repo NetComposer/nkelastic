@@ -95,7 +95,8 @@ syntax() ->
         fields => fun ?MODULE:fun_syntax/3,
         sort_fields_map => ignore,
         aggs => ignore,
-        delete => ignore
+        delete => ignore,
+        filters => ignore
     }.
 
 
