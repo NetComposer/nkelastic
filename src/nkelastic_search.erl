@@ -82,6 +82,7 @@ parse(Query, Opts) ->
             lager:info("Search body: ~p", [Body4]),
             {ok, Body4};
         {error, Error} ->
+            lager:error("parse error: ~p, ~p", [Opts, Meta]),
             {error, Error}
     end.
 
@@ -157,13 +158,13 @@ fun_syntax(sort, Val, Meta) ->
     fun_syntax_sort(Val, Meta, []);
 
 fun_syntax(fields, Val, _Meta) ->
-    case nklib_syntax:spec({list, binary}, Val) of
-        {ok, []} ->
+    case nklib_syntax:parse([{fields, Val}], #{fields=>{list, binary}}) of
+        {ok, [], _, _} ->
             {ok, '_source', false};
-        {ok, [<<"_all">>]} ->
+        {ok, #{fields:=[<<"_all">>]}, _, _} ->
             {ok, '_source', true};
-        {ok, List} ->
-            {ok, '_source', List};
+        {ok, #{fields:=Fields}, _, _} ->
+            {ok, '_source', Fields};
         _ ->
             error
     end.
