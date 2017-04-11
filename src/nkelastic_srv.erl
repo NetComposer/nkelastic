@@ -29,9 +29,12 @@
          handle_cast/2, handle_info/2]).
 
 
+%% Set debug options for service:
+%% debug => [nkelastic] or [{nkelastic, full}]
+
 -define(DEBUG(Txt, Args, State),
-    case erlang:get(nkelastic_debug) of
-        true -> ?LLOG(debug, Txt, Args, State);
+    case State#state.debug of
+        {true, _} -> ?LLOG(debug, Txt, Args, State);
         _ -> ok
     end).
 
@@ -95,7 +98,7 @@ request(Srv, Method, Path, Body) ->
         {error, {http_code, _, #{<<"error">>:=Error}}, Debug} ->
         	#{<<"type">>:=Type, <<"reason">>:=Reason} = Error,
         	case Debug of
-        		true ->
+                {true, _} ->
     				?LLOG(debug, "error ~s (~s): ~p", [Type, Reason, Error]);
     			_ ->
     				ok
@@ -104,7 +107,7 @@ request(Srv, Method, Path, Body) ->
         {error, {http_code, 404, _}, _Debug} ->
         	{error, object_not_found};
         {error, {http_code, 400, R}, _Debug} ->
-            ?LLOG(notice, "invalid request: ~p", [R]),
+            ?LLOG(warning, "invalid request: ~p", [R]),
             {error, internal_error};
         {error, Error, _Debug} ->
     		?LLOG(warning, "unrecognized error: ~p", [Error]),
@@ -183,7 +186,7 @@ start_link(SrvId, Config) ->
 	srv_id :: nkservice:id(),
     url :: binary(),
     headers :: [{binary(), binary()}],
-    debug :: boolean()
+    debug :: {boolean(), Full::boolean()}
 }).
 
 
@@ -259,7 +262,7 @@ handle_info(check_cluster, State) ->
                     ok
             end;
         {error, Error, _Debug} ->
-            ?LLOG(warning, "Error contacting backend: ~p", [Error])
+            ?LLOG(warning, "error contacting backend: ~p", [Error])
     end,
     erlang:send_after(?CHECK_TIME, self(), check_cluster),
     {noreply, State};
@@ -299,29 +302,17 @@ terminate(_Reason, _State) ->
 set_log(#state{srv_id=SrvId}=State) ->
     nkservice_util:register_for_changes(SrvId),
     Debug = case nkservice_util:get_debug_info(SrvId, nkelastic) of
-        {true, _} -> true;
+        {true, full} -> {true, true};
+        {true, _} -> {true, false};
         _ -> false
     end,
-    % ?LLOG(warning, "debug: ~p", [Debug]),
-    put(nkelastic_debug, Debug),
+    %% ?LLOG(warning, "debug: ~p", [Debug]),
     State#state{debug=Debug}.
-
 
 
 %% @private
 do_request(Method, Path, Body, State) ->
 	#state{url=Url, headers=Headers1, debug=Debug} = State,
-	case Debug of
-		true when is_map(Body) ->
-			?LLOG(debug, "~s\n~s", 
-				[
-                	list_to_binary([Path]),
-                	nklib_json:encode_pretty(Body)
-            	], 
-                State);
-		_ ->
-			ok
-	end,
     {Headers2, Body2} = case is_map(Body) of
         true -> 
             {
@@ -331,16 +322,14 @@ do_request(Method, Path, Body, State) ->
         false ->
         	{Headers1, Body}
     end,
-    Ciphers = ssl:cipher_suites(),
-    % Hackney fails with its default set of ciphers
-    % See hackney.ssl#44
+    %%    Ciphers = ssl:cipher_suites(),
     HttpOpts = [
         {connect_timeout, ?CONNECT_TIMEOUT},
         {recv_timeout, ?RECV_TIMEOUT},
         insecure,
         with_body,
-        {pool, default},
-        {ssl_options, [{ciphers, Ciphers}]}
+        {pool, default}
+        % {ssl_options, [{ciphers, Ciphers}]}
     ],
     Start = nklib_util:m_timestamp(),
     Url2 = list_to_binary([Url, Path]),
@@ -359,22 +348,27 @@ do_request(Method, Path, Body, State) ->
                     end
             end,
             case Path of
-                "_cluster/health" -> 
+                "_cluster/health" ->
                 	ok;
+                _ when Debug=={true, true} ->
+                    DbgSendBody = case is_map(Body) orelse is_list(Body) of
+                        true ->
+                            <<"-> ", (nklib_json:encode_pretty(Body))/binary, "\n">>;
+                        false ->
+                            <<>>
+                    end,
+                    DbgRespBody = case is_map(RespBody2) orelse is_list(RespBody2) of
+                        true ->
+                            <<"<- ", (nklib_json:encode_pretty(RespBody2))/binary, "\n">>;
+                        false ->
+                            <<"<- ", RespBody2/binary, "\n">>
+                    end,
+                    ?LLOG(debug, "~s ~s: ~p ~p msecs\n~s~s",
+                          [Method, Path, Code, Time, DbgSendBody, DbgRespBody], State);
+                _ when Debug=={true, false} ->
+                    ?LLOG(debug, "~s ~s: ~p ~p msecs", [Method, Path, Code, Time], State);
                 _ ->
-                 	?LLOG(info, "~s ~s: ~p ~p msecs", 
-                 		  [Method, Path, Code, Time], State),
-                	case Debug of
-						true ->
-							DebugBody = case is_map(RespBody2) of
-								true -> nklib_json:encode_pretty(RespBody2);
-								false -> RespBody
-							end,
-		                	?LLOG(debug, "~s ~s: ~p ~p msecs\n~s", 
-		                		  [Method, Path, Code, Time, DebugBody], State);
-						_ ->
-							ok
-		            end
+                    ok
             end,
             case (Code>=200 andalso  Code<300) of
             	true ->

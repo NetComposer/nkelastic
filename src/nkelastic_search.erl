@@ -79,10 +79,8 @@ parse(Query, Opts) ->
                 _ ->
                     Body3
             end,
-            lager:info("Search body: ~p", [Body4]),
             {ok, Body4};
         {error, Error} ->
-            lager:error("parse error: ~p, ~p", [Opts, Meta]),
             {error, Error}
     end.
 

@@ -163,7 +163,7 @@ update_analysis(Id, Index, Opts) ->
 update_or_create_index(Id, Index, Opts) ->
     case update_index(Id, Index, Opts) of
         {error, index_not_found} ->
-            lager:notice("NkELASTIC: Index ~s not found, creating it", [Index]),
+            lager:info("NkELASTIC: Index ~s not found, creating it", [Index]),
             create_index(Id, Index, Opts);
         Other ->
             Other
@@ -475,20 +475,20 @@ iterate_next(Id, ScrollId) ->
 
 %% @doc Iterate
 -spec iterate_fun(id(), index(), type(), query(), search_opts(),
-                  fun((map(), term()) -> term()), term()) ->
-    {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
+                  fun((map(), term()) -> {ok, term()} | {error, term()}), term()) ->
+    {ok, term()} | {error, term()}.
 
-iterate_fun(Id, Index, Type, Query, Opts, Fun, Acc0) ->
+iterate_fun(Id, Index, Type, Query, Opts, Fun, Acc) ->
     case iterate_start(Id, Index, Type, Query, Opts) of
         {ok, _ScrollId, _N, [], _} ->
-            {ok, Acc0};
+            {ok, Acc};
         {ok, ScrollId, _N, Objs, _} ->
-            Acc2 = lists:foldl(
-                fun(Obj, Acc) -> iterate_fun_process(Obj, Fun, Acc) end,
-                Acc0,
-                Objs
-            ),
-            iterate_fun2(Id, ScrollId, Fun, Acc2);
+            case iterate_fun_fold(Objs, Fun, Acc) of
+                {ok, Acc2} ->
+                    iterate_fun2(Id, ScrollId, Fun, Acc2);
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -539,21 +539,33 @@ extract_mappings([{Key, Val}|Rest], Metas, Prop) ->
 
 
 %% @private
-iterate_fun2(Id, ScrollId, Fun, Acc0) ->
+iterate_fun2(Id, ScrollId, Fun, Acc) ->
     case iterate_next(Id, ScrollId) of
         {ok, _ScrollId2, _N, [], _} ->
-            {ok, Acc0};
+            {ok, Acc};
         {ok, ScrollId2, _N, Objs, _} ->
-            Acc2 = lists:foldl(
-                fun(Obj, Acc) -> iterate_fun_process(Obj, Fun, Acc) end,
-                Acc0,
-                Objs
-            ),
-            iterate_fun2(Id, ScrollId2, Fun, Acc2);
+            case iterate_fun_fold(Objs, Fun, Acc) of
+                {ok, Acc2} ->
+                    iterate_fun2(Id, ScrollId2, Fun, Acc2);
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
 
+
+%% @private
+iterate_fun_fold([], _Fun, Acc) ->
+    {ok, Acc};
+
+iterate_fun_fold([Obj|Rest], Fun, Acc) ->
+    case iterate_fun_process(Obj, Fun, Acc) of
+        {ok, Acc2} ->
+            iterate_fun_fold(Rest, Fun, Acc2);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 %% @private
 iterate_fun_process(#{<<"_id">>:=ObjId}=Data, Fun, Acc) ->
