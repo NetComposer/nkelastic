@@ -49,8 +49,8 @@ event(_SessId, _Event, Session) ->
 
 
 % %% @doc Sends an event
-% -spec send_event(nkelastic_session:id(), nkservice_events:type(), 
-%                  nkservice_events:body(), nkelastic_session:session()) ->
+% -spec send_event(nkelastic_session:id(), nkevent:type(),
+%                  nkevent:body(), nkelastic_session:session()) ->
 %     ok.
 
 % %% @private
@@ -64,7 +64,7 @@ event(_SessId, _Event, Session) ->
 %         body = Body
 %     },
 %     send_direct_event(Event, Session),
-%     nkservice_events:send(Event),
+%     nkevent:send(Event),
 %     {ok, Session}.
 
 
