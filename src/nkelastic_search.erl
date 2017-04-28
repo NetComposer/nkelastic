@@ -22,10 +22,11 @@
 
 -module(nkelastic_search).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export_type([query/0, search_opts/0, search_sort_opts/0]).
--export([parse/2, syntax/0]).
+-export_type([query/0, search_spec/0, search_sort_opts/0]).
+-export([query/1]).
 -export([spanish_ascii_analyzer/0]).
 -export([fun_syntax/3]).
+-export([test/0]).
 
 %% ===================================================================
 %% Types
@@ -33,14 +34,27 @@
 
 -type query() :: map().
 
--type search_opts() ::
+
+%% Filters:
+%% ">..."
+%% ">=..."
+%% "<..."
+%% "<=..."
+%% "<...-...>"
+%% "<>"
+%% "!..."
+%%
+%% Sort fields can be "asc:...", "desc:..."
+
+-type search_spec() ::
     #{
         from => integer(),
         size => integer(),
-        fields => [binary()],                            %% "_all" for all
+        fields => [binary()],
+        filters => #{atom()|binary() => term()},         %% See above
         sort => atom() | binary() | #{atom()|binary() => search_sort_opts()},
-        sort_fields_map => #{atom() | binary() => atom() | binary()},
-        aggs => map()
+        sort_fields_map => #{atom() | binary() => atom() | binary()}
+%%        aggs => map()
     }.
 
 
@@ -54,48 +68,50 @@
 
 
 
+
 %% ===================================================================
 %% Public
 %% ===================================================================
 
+
 %% @doc
--spec parse(map(), search_opts()) ->
+-spec query(search_spec()) ->
     {ok, map()} | {error, term()}.
 
-parse(Query, Opts) ->
-    Meta = maps:with([sort_fields_map], Opts),
-    case nklib_syntax:parse(Opts, syntax(), Meta) of
+query(Spec) ->
+    Meta = maps:with([sort_fields_map], Spec),
+    Syntax1 = syntax(),
+    Syntax2 = Syntax1#{sort_fields_map => ignore, aggs => ignore},
+    case nklib_syntax:parse(Spec, Syntax2, Meta) of
         {ok, Body1, _, _} ->
-            Body2 = set_defaults_opts(Body1),
-            Body3 = case is_map(Query) of
+            Body2 = case maps:is_key('_source', Body1) of
                 true ->
-                    Body2#{query=>Query};
+                    Body1;
                 false ->
+                    Body1#{'_source' => true}
+            end,
+            Body3 = case Spec of
+                #{aggs:=Aggs} when is_map(Aggs) ->
+                    Body2#{aggs=>Aggs};
+                _ ->
                     Body2
             end,
-            Body4 = case Opts of
-                #{aggs:=Aggs} when is_map(Aggs) ->
-                    Body3#{aggs=>Aggs};
-                _ ->
-                    Body3
-            end,
-            {ok, Body4};
+            %% lager:info("Query: ~s", [nklib_json:encode_pretty(Body3)]),
+            {ok, Body3};
         {error, Error} ->
             {error, Error}
     end.
 
 
-%% @doc
+
+%% @private
 syntax() ->
     #{
         from => {integer, 0, none},
         size => {integer, 0, none},
         sort => fun ?MODULE:fun_syntax/3,
         fields => fun ?MODULE:fun_syntax/3,
-        sort_fields_map => ignore,
-        aggs => ignore,
-        delete => ignore,
-        filters => ignore
+        filters => fun ?MODULE:fun_syntax/3
     }.
 
 
@@ -159,13 +175,21 @@ fun_syntax(fields, Val, _Meta) ->
     case nklib_syntax:parse([{fields, Val}], #{fields=>{list, binary}}) of
         {ok, [], _, _} ->
             {ok, '_source', false};
-        {ok, #{fields:=[<<"_all">>]}, _, _} ->
-            {ok, '_source', true};
+%%        {ok, #{fields:=[<<"_all">>]}, _, _} ->
+%%            {ok, '_source', true};
+        {ok, #{fields:=[]}, _, _} ->
+            {ok, '_source', false};
         {ok, #{fields:=Fields}, _, _} ->
             {ok, '_source', Fields};
         _ ->
             error
-    end.
+    end;
+
+fun_syntax(filters, Map, _Meta) when is_map(Map) ->
+    fun_syntax_filters(maps:to_list(Map), []);
+
+fun_syntax(filters, _Val, _Meta) ->
+    error.
 
 
 %%  ----  Sort  ------------------
@@ -200,15 +224,27 @@ fun_syntax_sort([Map|Rest], Meta, Acc) when is_map(Map) ->
     end;
 
 fun_syntax_sort([Key|Rest], Meta, Acc) when is_binary(Key); is_atom(Key) ->
-    Name = syntax_sort_map(to_bin(Key), Meta),
-    fun_syntax_sort(Rest, Meta, [Name|Acc]);
+    Acc2 = case to_bin(Key) of
+        <<"asc:", Key2/binary>> ->
+            Name = syntax_sort_map(to_bin(Key2), Meta),
+            [#{Name => #{order=>asc}}|Acc];
+        <<"desc:", Key2/binary>> ->
+            Name = syntax_sort_map(to_bin(Key2), Meta),
+            [#{Name => #{order=>desc}}|Acc];
+        Key2 ->
+            Name = syntax_sort_map(to_bin(Key2), Meta),
+            [Name|Acc]
+    end,
+    fun_syntax_sort(Rest, Meta, Acc2);
 
 fun_syntax_sort([Key|Rest], Meta, Acc) when is_list(Key); is_integer(hd(Key)) ->
-    Name = syntax_sort_map(to_bin(Key), Meta),
-    fun_syntax_sort(Rest, Meta, [Name|Acc]);
+    fun_syntax_sort([to_bin(Key)|Rest], Meta, Acc);
 
-fun_syntax_sort(_Other, _Meta, _Acc) ->
-    error.
+fun_syntax_sort([_|_], _Meta, _Acc) ->
+    error;
+
+fun_syntax_sort(Other, Meta, Acc) ->
+    fun_syntax_sort([Other], Meta, Acc).
 
 
 %% @private
@@ -234,5 +270,69 @@ syntax_sort_map(Name, _Meta) ->
     Name.
 
 
+%%  ----  Fields  ------------------
+
+
 %% @private
+fun_syntax_filters([], Acc) ->
+    case Acc of
+        [] ->
+            {ok, []};
+        [Filter] ->
+            {ok, query, #{constant_score => #{filter => Filter}}};
+        Filters ->
+            {ok, query, #{bool => #{filter => Filters}}}
+    end;
+
+fun_syntax_filters([{Field, Val}|Rest], Acc) ->
+    Filter = fun_syntax_get_filter(to_bin(Field), Val),
+    fun_syntax_filters(Rest, [Filter|Acc]).
+
+%% @private
+fun_syntax_get_filter(Field, <<"childs_of:/">>) ->
+    #{wildcard => #{Field => <<"/?*">>}};
+fun_syntax_get_filter(Field, <<"childs_of:", Data/binary>>) ->
+    #{prefix => #{Field => <<Data/binary, $/>>}};
+fun_syntax_get_filter(Field, <<"prefix:", Data/binary>>) ->
+    #{prefix => #{Field => <<Data/binary>>}};
+fun_syntax_get_filter(Field, <<">=", Data/binary>>) ->
+    #{range => #{Field => #{gte => Data}}};
+fun_syntax_get_filter(Field, <<">", Data/binary>>) ->
+    #{range => #{Field => #{gt => Data}}};
+fun_syntax_get_filter(Field, <<"<=", Data/binary>>) ->
+    #{range => #{Field => #{lte => Data}}};
+fun_syntax_get_filter(Field, <<"<", Data/binary>>) ->
+    case binary:at(Data, byte_size(Data)-1) of
+        $> ->
+            case binary:split(Data, <<"-">>) of
+                [Data1, Data2] ->
+                    #{range => #{Field => #{gte=>Data1, lte=>Data2}}};
+                _ ->
+                    #{range => #{Field => #{lt => Data}}}
+            end;
+        _ ->
+            #{range => #{Field => #{lt => Data}}}
+    end;
+fun_syntax_get_filter(Field, <<"!", Data/binary>>) ->
+    #{bool => #{must_not => #{term => #{Field => Data}}}};
+fun_syntax_get_filter(Field, Values) when is_list(Values)->
+    #{terms => #{Field => Values}};
+fun_syntax_get_filter(Field, Value) ->
+    #{term => #{Field => Value}}.
+
+
+%% @private
+to_bin(T) when is_binary(T)-> T;
 to_bin(T) -> nklib_util:to_binary(T).
+
+
+%% @private
+test() ->
+    Spec = #{
+        from => 1,
+        fields => a,
+        sort => [b,#{c=>#{order=>asc}}, <<"asc:n1">>, <<"desc:n2">>],
+        filters => #{a=>1, b=><<">a">>, c=><<">=a">>, d=><<"<a">>, e=><<"<=a">>, f=><<"<a-b>">>, g=>[1,a],
+                     h=><<"!b">>, i=><<"childs_of:/">>, j=><<"childs_of:/a/b">>, k=><<"prefix:pp">>}
+    },
+    query(Spec).

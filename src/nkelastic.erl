@@ -22,10 +22,11 @@
 
 -module(nkelastic).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
-
+-export_type([search_spec/0]).
 
 %% ===================================================================
 %% Types
 %% ===================================================================
 
+-type search_spec() :: nkelastic_search:search_spec().
 

@@ -31,7 +31,7 @@
 -export([update_analysis/3, add_mapping/4]).
 -export([get_aliases/1, get_aliases/2, add_alias/4, delete_alias/3]).
 -export([get/4, put/5, put_and_wait/5, delete/4, delete_and_wait/4, delete_by_query/4, delete_all/3]).
--export([search/5, count/5, explain/5, iterate_start/5, iterate_next/2, iterate_fun/7]).
+-export([search/4, count/4, explain/4, iterate_start/4, iterate_next/2, iterate_fun/6]).
 
 -type id() :: nkservice:id().
 -type index() :: binary() | string().
@@ -40,10 +40,6 @@
 -type error() :: {es_error, binary(), binary()} | term().
 -type status() :: geen | yellow | red.
 -type query() :: nkelastic_search:query().
--type search_opts() :: nkelastic_search:search_opts().
-
-
-
 
 % https://www.elastic.co/guide/en/elasticsearch/reference/current/cat.html
 
@@ -352,101 +348,83 @@ delete_all(Id, Index, Type) ->
 
 
 %% @doc Search
--spec search(id(), index(), type(), query(), search_opts()) ->
+%% Query can be generated with nkelastic_search:query/1
+-spec search(id(), index(), type(), query()) ->
     {ok, integer(), Obj::[map()], Aggs::map(), Meta::map()} | {error, term()}.
 
-search(Id, Index, Type, Query, Opts) ->
-    case nkelastic_search:parse(Query, Opts) of
-        {ok, Body} ->
-            Url =  index_url(search, Index, Type, <<>>),
-            case request(Id, post, Url, Body) of
-                {ok, Reply} ->
-                    #{
-                        <<"took">> := Time,
-                        <<"timed_out">> := TimedOut,
-                        <<"hits">>:= #{
-                            <<"total">>:=Total, <<"hits">>:=Hits
-                        }
-                    } = Reply,
-                    %% lager:info("Query took ~p msecs", [Time]),
-                    %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
-                    Aggs = maps:get(<<"aggregations">>, Reply, #{}),
-                    Meta = #{time=>Time, timeout=>TimedOut},
-                    {ok, Total, Hits, Aggs, Meta};
-                {error, Error} ->
-                    {error, Error}
-            end;
+search(Id, Index, Type, Query) ->
+    Url =  index_url(search, Index, Type, <<>>),
+    case request(Id, post, Url, Query) of
+        {ok, Reply} ->
+            #{
+                <<"took">> := Time,
+                <<"timed_out">> := TimedOut,
+                <<"hits">>:= #{
+                    <<"total">>:=Total, <<"hits">>:=Hits
+                }
+            } = Reply,
+            %% lager:info("Query took ~p msecs", [Time]),
+            %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
+            Aggs = maps:get(<<"aggregations">>, Reply, #{}),
+            Meta = #{time=>Time, timeout=>TimedOut},
+            {ok, Total, Hits, Aggs, Meta};
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc Count
--spec count(id(), index(), type(), query(), search_opts()) ->
+-spec count(id(), index(), type(), query()) ->
     {ok, integer()} | {error, term()}.
 
-count(Id, Index, Type, Query, Opts) ->
-    case nkelastic_search:parse(Query, Opts) of
-        {ok, Body} ->
-            Url = index_url(count, Index, Type, <<>>),
-            case request(Id, post, Url, Body) of
-                {ok, #{<<"count">>:=Count}} ->
-                    {ok, Count};
-                {error, Error} ->
-                    {error, Error}
-            end;
+count(Id, Index, Type, Query) ->
+    Url = index_url(count, Index, Type, <<>>),
+    case request(Id, post, Url, Query) of
+        {ok, #{<<"count">>:=Count}} ->
+            {ok, Count};
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc Search explain
--spec explain(id(), index(), type(), query(), search_opts()) ->
+-spec explain(id(), index(), type(), query()) ->
     {ok, integer()} | {error, term()}.
 
-explain(Id, Index, Type, Query, Opts) ->
-    case nkelastic_search:parse(Query, Opts) of
-        {ok, Body} ->
-            Url = index_url(explain, Index, Type, <<>>),
-            case request(Id, post, Url, Body) of
-                {ok, Data} ->
-                    {ok, Data};
-                {error, Error} ->
-                    {error, Error}
-            end;
+explain(Id, Index, Type, Query) ->
+    Url = index_url(explain, Index, Type, <<>>),
+    case request(Id, post, Url, Query) of
+        {ok, Data} ->
+            {ok, Data};
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc Iterate
--spec iterate_start(id(), index(), type(), query(), search_opts()) ->
+-spec iterate_start(id(), index(), type(), query()) ->
     {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
 
-iterate_start(Id, Index, Type, Query, Opts) ->
-    case nkelastic_search:parse(Query, Opts) of
-        {ok, Body} ->
-            Url =  index_url(search, Index, Type, <<"?scroll=1m">>),
-            case request(Id, post, Url, Body) of
-                {ok, Reply} ->
-                    #{
-                        <<"_scroll_id">> := ScrollId,
-                        <<"took">> := Time,
-                        <<"timed_out">> := TimedOut,
-                        <<"hits">>:= #{
-                            <<"total">>:=Total, <<"hits">>:=Hits
-                        }
-                    } = Reply,
-                    %% lager:info("Query took ~p msecs", [Time]),
-                    %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
-                    Meta = #{time=>Time, timeout=>TimedOut},
-                    {ok, ScrollId, Total, Hits, Meta};
-                {error, Error} ->
-                    {error, Error}
-            end;
+iterate_start(Id, Index, Type, Query) ->
+    Url =  index_url(search, Index, Type, <<"?scroll=1m">>),
+    case request(Id, post, Url, Query) of
+        {ok, Reply} ->
+            #{
+                <<"_scroll_id">> := ScrollId,
+                <<"took">> := Time,
+                <<"timed_out">> := TimedOut,
+                <<"hits">>:= #{
+                    <<"total">>:=Total, <<"hits">>:=Hits
+                }
+            } = Reply,
+            %% lager:info("Query took ~p msecs", [Time]),
+            %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
+            Meta = #{time=>Time, timeout=>TimedOut},
+            {ok, ScrollId, Total, Hits, Meta};
         {error, Error} ->
             {error, Error}
     end.
+
 
 %% @doc Search
 -spec iterate_next(id(), binary()) ->
@@ -474,12 +452,12 @@ iterate_next(Id, ScrollId) ->
 
 
 %% @doc Iterate
--spec iterate_fun(id(), index(), type(), query(), search_opts(),
+-spec iterate_fun(id(), index(), type(), query(),
                   fun((map(), term()) -> {ok, term()} | {error, term()}), term()) ->
     {ok, term()} | {error, term()}.
 
-iterate_fun(Id, Index, Type, Query, Opts, Fun, Acc) ->
-    case iterate_start(Id, Index, Type, Query, Opts) of
+iterate_fun(Id, Index, Type, Query, Fun, Acc) ->
+    case iterate_start(Id, Index, Type, Query) of
         {ok, _ScrollId, _N, [], _} ->
             {ok, Acc};
         {ok, ScrollId, _N, Objs, _} ->
