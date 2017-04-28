@@ -107,7 +107,7 @@ query(Spec) ->
                 0 ->
                     Body2;
                 _ ->
-                    #{query => #{bool => Query2}}
+                    Body2#{query => #{bool => Query2}}
             end,
             Body4 = case Spec of
                 #{aggs:=Aggs} when is_map(Aggs) ->
