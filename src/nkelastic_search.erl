@@ -53,6 +53,7 @@
         fields => [binary()],
         filters => #{atom()|binary() => term()},         %% See above
         sort => atom() | binary() | #{atom()|binary() => search_sort_opts()},
+        simply_query => binary(),
         sort_fields_map => #{atom() | binary() => atom() | binary()}
 %%        aggs => map()
     }.
@@ -90,14 +91,33 @@ query(Spec) ->
                 false ->
                     Body1#{'_source' => true}
             end,
-            Body3 = case Spec of
-                #{aggs:=Aggs} when is_map(Aggs) ->
-                    Body2#{aggs=>Aggs};
-                _ ->
-                    Body2
+            Query1 = case maps:find(simple_query, Body2) of
+                {ok, SQ} ->
+                    #{must => #{simple_query_string => #{query => SQ}}};
+                error ->
+                    #{}
             end,
-            %% lager:info("Query: ~s", [nklib_json:encode_pretty(Body3)]),
-            {ok, Body3};
+            Query2 = case maps:get(filters, Body2, []) of
+                [] ->
+                    Query1;
+                Filters ->
+                    Query1#{filter => Filters}
+            end,
+            Body3 = case map_size(Query2) of
+                0 ->
+                    Body2;
+                _ ->
+                    #{query => #{bool => Query2}}
+            end,
+            Body4 = case Spec of
+                #{aggs:=Aggs} when is_map(Aggs) ->
+                    Body3#{aggs=>Aggs};
+                _ ->
+                    Body3
+            end,
+            Body5 = maps:without([filters, simple_query], Body4),
+            %% lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
+            {ok, Body5};
         {error, Error} ->
             {error, Error}
     end.
@@ -111,7 +131,8 @@ syntax() ->
         size => {integer, 0, none},
         sort => fun ?MODULE:fun_syntax/3,
         fields => fun ?MODULE:fun_syntax/3,
-        filters => fun ?MODULE:fun_syntax/3
+        filters => fun ?MODULE:fun_syntax/3,
+        simple_query => binary
     }.
 
 
@@ -154,16 +175,6 @@ spanish_ascii_analyzer() ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-
-%% @private
-set_defaults_opts(Body) ->
-    case Body of
-        #{'_source':=_} ->
-            Body;
-        _ ->
-            Body#{'_source'=>false}
-    end.
 
 
 
@@ -275,14 +286,7 @@ syntax_sort_map(Name, _Meta) ->
 
 %% @private
 fun_syntax_filters([], Acc) ->
-    case Acc of
-        [] ->
-            {ok, []};
-        [Filter] ->
-            {ok, query, #{constant_score => #{filter => Filter}}};
-        Filters ->
-            {ok, query, #{bool => #{filter => Filters}}}
-    end;
+    {ok, Acc};
 
 fun_syntax_filters([{Field, Val}|Rest], Acc) ->
     Filter = fun_syntax_get_filter(to_bin(Field), Val),
