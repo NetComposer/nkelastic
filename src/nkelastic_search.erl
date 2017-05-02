@@ -54,8 +54,8 @@
         filters => #{atom()|binary() => term()},         %% See above
         sort => atom() | binary() | #{atom()|binary() => search_sort_opts()},
         simply_query => binary(),
+        simple_query_opts => #{fields=>[binary()], default_operator=>'AND' | 'OR'},
         sort_fields_map => #{atom() | binary() => atom() | binary()}
-%%        aggs => map()
     }.
 
 
@@ -93,7 +93,8 @@ query(Spec) ->
             end,
             Query1 = case maps:find(simple_query, Body2) of
                 {ok, SQ} ->
-                    #{must => #{simple_query_string => #{query => SQ}}};
+                    SQOpts = maps:get(simple_query_opts, Body2, #{}),
+                    #{must => #{simple_query_string => SQOpts#{query => SQ}}};
                 error ->
                     #{}
             end,
@@ -115,7 +116,7 @@ query(Spec) ->
                 _ ->
                     Body3
             end,
-            Body5 = maps:without([filters, simple_query], Body4),
+            Body5 = maps:without([filters, simple_query, simple_query_opts], Body4),
             %% lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
             {ok, Body5};
         {error, Error} ->
@@ -132,7 +133,12 @@ syntax() ->
         sort => fun ?MODULE:fun_syntax/3,
         fields => fun ?MODULE:fun_syntax/3,
         filters => fun ?MODULE:fun_syntax/3,
-        simple_query => binary
+        simple_query => binary,
+        simple_query_opts =>
+            #{
+                fields => {list, binary},
+                default_operator => {atom, ['OR', 'AND']}
+            }
     }.
 
 
