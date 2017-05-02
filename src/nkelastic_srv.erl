@@ -322,7 +322,13 @@ do_request(Method, Path, Body, State) ->
         false ->
         	{Headers1, Body}
     end,
-    %%    Ciphers = ssl:cipher_suites(),
+    case Body2 of
+        error ->
+            ?LLOG(error, "Json error: ~p", [Body]),
+            error(json_error);
+        _ ->
+            ok
+    end,
     HttpOpts = [
         {connect_timeout, ?CONNECT_TIMEOUT},
         {recv_timeout, ?RECV_TIMEOUT},
