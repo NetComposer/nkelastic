@@ -117,7 +117,7 @@ query(Spec) ->
                     Body3
             end,
             Body5 = maps:without([filters, simple_query, simple_query_opts], Body4),
-            %% lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
+            % lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
             {ok, Body5};
         {error, Error} ->
             {error, Error}
@@ -295,7 +295,7 @@ fun_syntax_filters([], Acc) ->
     {ok, Acc};
 
 fun_syntax_filters([{Field, Val}|Rest], Acc) ->
-    Filter = fun_syntax_get_filter(to_bin(Field), Val),
+    Filter = fun_syntax_get_filter(Field, Val),
     fun_syntax_filters(Rest, [Filter|Acc]).
 
 %% @private
@@ -306,25 +306,26 @@ fun_syntax_get_filter(Field, <<"childs_of:", Data/binary>>) ->
 fun_syntax_get_filter(Field, <<"prefix:", Data/binary>>) ->
     #{prefix => #{Field => <<Data/binary>>}};
 fun_syntax_get_filter(Field, <<">=", Data/binary>>) ->
-    #{range => #{Field => #{gte => Data}}};
+    #{range => #{Field => #{gte => term(Data)}}};
 fun_syntax_get_filter(Field, <<">", Data/binary>>) ->
-    #{range => #{Field => #{gt => Data}}};
+    #{range => #{Field => #{gt => term(Data)}}};
 fun_syntax_get_filter(Field, <<"<=", Data/binary>>) ->
-    #{range => #{Field => #{lte => Data}}};
+    #{range => #{Field => #{lte => term(Data)}}};
 fun_syntax_get_filter(Field, <<"<", Data/binary>>) ->
-    case binary:at(Data, byte_size(Data)-1) of
+    Size = byte_size(Data) - 1,
+    case Size>0 andalso binary:at(Data, Size) of
         $> ->
-            case binary:split(Data, <<"-">>) of
+            case binary:split(<<Data:Size/binary>>, <<"-">>) of
                 [Data1, Data2] ->
-                    #{range => #{Field => #{gte=>Data1, lte=>Data2}}};
+                    #{range => #{Field => #{gte=>term(Data1), lte=>term(Data2)}}};
                 _ ->
-                    #{range => #{Field => #{lt => Data}}}
+                    #{range => #{Field => #{lt => term(Data)}}}
             end;
         _ ->
-            #{range => #{Field => #{lt => Data}}}
+            #{range => #{Field => #{lt => term(Data)}}}
     end;
 fun_syntax_get_filter(Field, <<"!", Data/binary>>) ->
-    #{bool => #{must_not => #{term => #{Field => Data}}}};
+    #{bool => #{must_not => #{term => #{Field => term(Data)}}}};
 fun_syntax_get_filter(Field, Values) when is_list(Values)->
     #{terms => #{Field => Values}};
 fun_syntax_get_filter(Field, Value) ->
@@ -334,6 +335,17 @@ fun_syntax_get_filter(Field, Value) ->
 %% @private
 to_bin(T) when is_binary(T)-> T;
 to_bin(T) -> nklib_util:to_binary(T).
+
+
+%% @private
+term(<<Ch, _/binary>>=Data) when Ch>=$0, Ch=<$9 ->
+    case catch binary_to_integer(Data) of
+        Num when is_integer(Num) -> Num;
+        _ -> Data
+    end;
+
+term(Data) ->
+    Data.
 
 
 %% @private
