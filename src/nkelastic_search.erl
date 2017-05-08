@@ -84,7 +84,7 @@ query(Spec) ->
     Syntax1 = syntax(),
     Syntax2 = Syntax1#{sort_fields_map => ignore, aggs => ignore},
     case nklib_syntax:parse(Spec, Syntax2, Meta) of
-        {ok, Body1, _, _} ->
+        {ok, Body1, _} ->
             Body2 = case maps:is_key('_source', Body1) of
                 true ->
                     Body1;
@@ -190,7 +190,7 @@ fun_syntax(sort, Val, Meta) ->
 
 fun_syntax(fields, Val, _Meta) ->
     case nklib_syntax:parse([{fields, Val}], #{fields=>{list, binary}}) of
-        {ok, [], _, _} ->
+        {ok, [], _} ->
             {ok, '_source', false};
 %%        {ok, #{fields:=[<<"_all">>]}, _, _} ->
 %%            {ok, '_source', true};
@@ -228,7 +228,7 @@ fun_syntax_sort([Map|Rest], Meta, Acc) when is_map(Map) ->
         [{Field, Data}] ->
             Syntax = sort_syntax(),
             case nklib_syntax:parse(Data, Syntax) of
-                {ok, _, _, [UnkField|_]} ->
+                {ok, _, [UnkField|_]} ->
                     {error, {syntax_error, <<"sort.", UnkField/binary>>}};
                 {ok, Parsed, _, []} ->
                     Name = syntax_sort_map(to_bin(Field), Meta),
