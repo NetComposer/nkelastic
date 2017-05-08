@@ -192,11 +192,9 @@ fun_syntax(fields, Val, _Meta) ->
     case nklib_syntax:parse([{fields, Val}], #{fields=>{list, binary}}) of
         {ok, [], _} ->
             {ok, '_source', false};
-%%        {ok, #{fields:=[<<"_all">>]}, _, _} ->
-%%            {ok, '_source', true};
-        {ok, #{fields:=[]}, _, _} ->
+        {ok, #{fields:=[]}, _} ->
             {ok, '_source', false};
-        {ok, #{fields:=Fields}, _, _} ->
+        {ok, #{fields:=Fields}, _} ->
             {ok, '_source', Fields};
         _ ->
             error
