@@ -228,7 +228,7 @@ fun_syntax_sort([Map|Rest], Meta, Acc) when is_map(Map) ->
             case nklib_syntax:parse(Data, Syntax) of
                 {ok, _, [UnkField|_]} ->
                     {error, {syntax_error, <<"sort.", UnkField/binary>>}};
-                {ok, Parsed, _, []} ->
+                {ok, Parsed, []} ->
                     Name = syntax_sort_map(to_bin(Field), Meta),
                     fun_syntax_sort(Rest, Meta, [#{Name=>Parsed}|Acc]);
                 {error, _} ->
