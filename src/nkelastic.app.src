@@ -4,6 +4,6 @@
     {modules, []},
     {registered, []},
     {mod, {nkelastic_app, []}},
-    {applications, [nklib]},
+    {applications, [nklib, hackney]},
     {env, []}
 ]}.
