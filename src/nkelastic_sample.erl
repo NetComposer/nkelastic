@@ -18,23 +18,35 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc NkELASTIC application
-
--module(nkelastic).
+%% @doc 
+-module(nkelastic_sample).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export_type([search_spec/0]).
 
--export([t/0]).
+-define(SRV, es_test).
+
+-compile(export_all).
+
+-include_lib("nkservice/include/nkservice.hrl").
 
 %% ===================================================================
-%% Types
+%% Public
 %% ===================================================================
 
--type search_spec() :: nkelastic_search:search_spec().
 
-
-t() ->
+%% @doc Starts the service
+start() ->
     {ok, List} = application:get_env(nkelastic, stores),
-    Syntax = nkelastic_callbacks:plugin_syntax(),
-    {ok, #{nkelastic:=L}, []} = nklib_syntax:parse(#{nkelastic=>List}, Syntax),
-    nkelastic_callbacks:parse_stores(L, #{}).
+    Spec = #{
+        callback => ?MODULE,
+        nkelastic => List
+    },
+    nkservice:start(?SRV, Spec).
+
+
+%% @doc Stops the service
+stop() ->
+    nkservice:stop(?SRV).
+
+
+plugin_deps() ->
+    [nkelastic].

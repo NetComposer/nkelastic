@@ -4,6 +4,6 @@
     {modules, []},
     {registered, []},
     {mod, {nkelastic_app, []}},
-    {applications, [nklib, hackney]},
+    {applications, [nkservice, nkhttpc, poolboy]},
     {env, []}
 ]}.

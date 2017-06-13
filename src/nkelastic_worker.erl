@@ -18,23 +18,31 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc NkELASTIC application
-
--module(nkelastic).
+%% @doc Elasticsearch worker
+-module(nkelastic_worker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export_type([search_spec/0]).
+-behaviour(poolboy_worker).
 
--export([t/0]).
+-export([start_link/1]).
+
 
 %% ===================================================================
-%% Types
+%% Public
 %% ===================================================================
 
--type search_spec() :: nkelastic_search:search_spec().
 
 
-t() ->
-    {ok, List} = application:get_env(nkelastic, stores),
-    Syntax = nkelastic_callbacks:plugin_syntax(),
-    {ok, #{nkelastic:=L}, []} = nklib_syntax:parse(#{nkelastic=>List}, Syntax),
-    nkelastic_callbacks:parse_stores(L, #{}).
+%% @doc
+start_link({_Id, []}) ->
+    {error, no_connections};
+
+start_link({Id, [{Conns, ConnOpts}|Rest]}) ->
+    case nkhttpc_single:start_link(Id, Conns, ConnOpts) of
+        {ok, Pid} ->
+            {ok, Pid};
+        {error, Error} when Rest == [] ->
+            {error, Error};
+        {error, _} ->
+            start_link({Id, Rest})
+    end.
+

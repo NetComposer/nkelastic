@@ -28,6 +28,8 @@
          plugin_start/2, plugin_stop/2, service_init/2]).
 -export([error_reason/2]).
 %%-export([api_server_cmd/2, api_server_syntax/4]).
+-compile(export_all).
+
 
 -include("nkelastic.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
@@ -98,46 +100,41 @@ plugin_deps() ->
 
 plugin_syntax() ->
 	#{
-		elastic_url => binary,
-		elastic_user => binary,
-		elastic_pass => binary
-	}.
+	    nkelastic =>
+            {list, #{
+                id => binary,
+                url => binary,
+                pool_size => {integer, 1, none},
+                pool_overflow => {integer, 1, none},
+                '__mandatory' => [url]
+           }}
+}.
 
+
+plugin_config(#{nkelastic:=List}=Config, #{id:=SrvId}) ->
+    case parse_stores(List, #{}) of
+        {ok, ParsedMap} ->
+            ServerId = nklib_util:to_atom(<<(nklib_util:to_binary(SrvId))/binary, "_nkelastic">>),
+            {ok, Config#{nkelastic_stores=>{ServerId, ParsedMap}}, ServerId};
+        {error, Error} ->
+            {error, Error}
+    end;
 
 plugin_config(Config, _Service) ->
-	case Config of
-		#{elastic_url:=Url} ->
-			Cache = case Config of
-				#{elastic_user:=User, elastic_pass:=Pass} ->
-					#{url=>Url, user=>User, pass=>Pass};
-				_ ->
-					#{url=>Url}
-			end,
-			{ok, Config, Cache};
-		_ ->
-			{error, {missing_field, elastic_url}}
-	end.
+    {ok, Config}.
 
 
-plugin_start(Config, #{id:=SrvId, config_nkelastic:=Elastic}) ->
-    Spec = {
-        nkelastic, 
-        {nkelastic_srv, start_link, [SrvId, Elastic]},
-        permanent,
-        5000,
-        worker,
-        [nkelastic_srv]
-    },
-    case nkservice_srv:start_proc(SrvId, Spec) of
-    	{ok, _} ->
-    		{ok, Config};
-    	{error, Error} ->
-    		{error, {could_not_start, Error}}
-    end.
+plugin_start(#{nkelastic_stores:={ServerId, ParsedMap}}=Config, #{id:=SrvId}) ->
+    {ok, _} = nkservice_srv:start_proc(SrvId, ServerId, nkelastic_server, [SrvId, ServerId, ParsedMap]),
+    {ok, Config};
+
+plugin_start(Config, _Service) ->
+    {ok, Config}.
 
 
-plugin_stop(Config, _Service) ->
-	{ok, Config}.
+plugin_stop(Config, #{id:=_Id}) ->
+    {ok, Config}.
+
 
 
 service_init(#{id:=Id}=Service, State) ->
@@ -187,4 +184,25 @@ error_reason(_Lang, _Error) ->
 %%api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 %%	continue.
 
+
+%% ===================================================================
+%% Util
+%% ===================================================================
+
+parse_stores([], Acc) ->
+    {ok, Acc};
+
+parse_stores([#{url:=Url}=Map|Rest], Acc) ->
+    case nkpacket:parse_urls(es, [http, https], Url) of
+        {ok, Conns} ->
+            Id = maps:get(id, Map, <<"main">>),
+            case maps:is_key(Id, Acc) of
+                false ->
+                    parse_stores(Rest, Acc#{Id=>{Map, Conns}});
+                true ->
+                    {error, duplicated_id}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
 
