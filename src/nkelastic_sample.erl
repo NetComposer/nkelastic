@@ -39,6 +39,7 @@ start() ->
     Spec = #{
         callback => ?MODULE,
         nkelastic => List
+        % debug => [{nkelastic, [full]}]
     },
     nkservice:start(?SRV, Spec).
 
@@ -50,3 +51,35 @@ stop() ->
 
 plugin_deps() ->
     [nkelastic].
+
+
+
+health(Pool, Num) ->
+    Refs = [make_ref() || _ <- lists:seq(1,Num)],
+    Self = self(),
+    Start = nklib_util:m_timestamp(),
+    lists:foreach(
+        fun(Ref) ->
+            spawn_link(
+                fun() ->
+                    {ok, _, Time} = nkelastic_server:req(es_test, Pool, get, "/"),
+                    Self ! {t, Ref, Time}
+                end)
+        end,
+        Refs),
+    Times = wait_refs(Refs, []),
+    {nklib_util:m_timestamp() - Start, Times}.
+
+
+
+wait_refs([], Times) ->
+    Times;
+
+wait_refs(Refs, Times) ->
+    receive
+        {t, Ref, Time} ->
+            true = lists:member(Ref, Refs),
+            wait_refs(Refs -- [Ref], [Time*1000|Times])
+    after 5000 ->
+        error
+    end.

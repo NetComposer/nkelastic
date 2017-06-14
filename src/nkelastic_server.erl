@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([req/6]).
+-export([req/4, req/5, req/6]).
 -export([start_link/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
     handle_cast/2, handle_info/2]).
@@ -32,6 +32,9 @@
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkELASTIC Server (~p) "++Txt, [State#state.srv_id|Args])).
+
+-define(REQ_DBG(Txt, Args),
+    lager:debug("NkELASTIC Debug "++Txt, Args)).
 
 
 %% ===================================================================
@@ -47,19 +50,33 @@
 
 
 %% @doc
+req(SrvId, Pool, Method, Path) ->
+    req(SrvId, Pool, Method, Path, <<>>).
+
+
+%% @doc
+req(SrvId, Pool, Method, Path, Body) ->
+    req(SrvId, Pool, Method, Path, Body, 30000).
+
+
+%% @doc
 req(SrvId, Pool, Method, Path, Body, Timeout) ->
-    case get_pool(SrvId, Pool) of
+    case get_pool(SrvId, to_bin(Pool)) of
         {ok, Pid} ->
+            Debug = case nkservice_util:get_debug(SrvId, nkelastic) of
+                undefined -> false;
+                [] -> {true, false};
+                [full] -> {true, true}
+            end,
             Fun = fun(Worker) ->
-                nkhttpc_single:req(Worker, Method, Path, [], Body, Timeout)
+                do_req(Worker, Method, to_bin(Path), Body, Timeout, Debug)
             end,
             poolboy:transaction(Pid, Fun);
         {error, Error} ->
             {error, Error}
     end.
 
-
-%% @doc
+%% @private
 get_pool(SrvId, Id) ->
     Name = SrvId:config_nkelastic(),
     gen_server:call(Name, {get_pool, Id}).
@@ -205,11 +222,11 @@ start_pools([{Id, {IdOpts, ConnList}}|Rest], #state{pools=Pools} = State) ->
                 end
             catch
                 error:CError ->
-                    ?LLOG(warning, "could not start pool '~s': ~p", [Id, CError], State),
+                    Trace = erlang:get_stacktrace(),
+                    ?LLOG(warning, "could not start pool1 '~s': ~p (~p)", [Id, CError, Trace], State),
                     start_pools(Rest, State)
             end
     end.
-
 
 
 %% @private
@@ -222,9 +239,12 @@ get_conns([{[], _Opts}|Rest2], Acc) ->
 get_conns([{Conns, ConnOpts}|Rest], Acc) ->
     ConnOpts1 = maps:with([host], ConnOpts),
     ConnOpts2 = ConnOpts1#{
+        path => nklib_parse:path(maps:get(path, ConnOpts, <<>>)),
         idle_timeout => 0,
-        debug => true,
-        packet_debug => false
+        debug => false,
+        packet_debug => false,
+        refresh_interval => 30,
+        refresh_request => {get, <<"/">>, [], <<>>}
     },
     ConnOpts3 = case maps:get(user, ConnOpts, <<>>) of
        <<>> ->
@@ -262,7 +282,6 @@ test_connect(Id, [{Conns, ConnOpts}|Rest], State) ->
             nkhttpc_single:stop(Pid),
             ok;
         {error, Error} ->
-            ?LLOG(warnig, "connection to ~p ERROR: ~p", [Id, Error], State),
             case Rest of
                 [] ->
                     {error, Error};
@@ -272,3 +291,114 @@ test_connect(Id, [{Conns, ConnOpts}|Rest], State) ->
     end.
 
 
+%% @private
+do_req(Worker, Method, Path, Body, Timeout, Debug) ->
+    {Headers, Body2} = case is_map(Body) of
+        true ->
+            {
+                [{<<"Content-Type">>, <<"application/json">>}],
+                nklib_json:encode(Body)
+            };
+        false ->
+            {[], Body}
+    end,
+    case Body2 of
+        error ->
+            {error, {json_error, Body}};
+        _ ->
+            do_req2(Worker, Method, Path, Headers, Body2, Timeout, Debug)
+    end.
+
+
+%% @private
+do_req2(Worker, Method, Path, Headers, Body, Timeout, Debug) ->
+    case nkhttpc_single:req(Worker, Method, Path, Headers, Body, Timeout) of
+        {ok, Code, RespHds, RespBody, Time} ->
+            RespBody2 = case nklib_util:get_value(<<"Content-Type">>, RespHds) of
+                <<"application/json", _/binary>> ->
+                    nklib_json:decode(RespBody);
+                _ ->
+                    case nklib_util:get_value(<<"content-type">>, RespHds) of
+                        <<"application/json", _/binary>> ->
+                            nklib_json:decode(RespBody);
+                        _ ->
+                            RespBody
+                    end
+            end,
+            req_debug(Method, Path, Body, Code, RespBody2, Time, Debug),
+            case (Code >= 200 andalso Code < 300) of
+                true ->
+                    {ok, RespBody2, Time};
+                false ->
+                    req_error(Code, RespBody2, Debug)
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+req_error(_Code, #{<<"error">>:=Error}, Debug) ->
+    #{<<"type">>:=Type, <<"reason">>:=Reason} = Error,
+    case Debug of
+        {true, _} ->
+            ?REQ_DBG("error ~s (~s): ~p", [Type, Reason, Error]);
+        _ ->
+            ok
+    end,
+    {error, get_error(Type, Reason)};
+
+req_error(400, Body, _Debug) ->
+    lager:notice("NkELASTIC invalid request: ~p", [Body]),
+    {error, internal_error};
+
+req_error(Code, Body, _Debug) ->
+    lager:notice("NkELASTIC unrecognized error: ~p ~p", [Code, Body]),
+    {error, elastic_error}.
+
+
+%% @private
+get_error(<<"index_not_found_exception">>, _Reason) ->
+    index_not_found;
+
+get_error(<<"search_phase_execution_exception">>, _Reason) ->
+    search_error;
+
+get_error(<<"illegal_argument_exception">>, _Reason) ->
+    illegal_argument;
+
+get_error(Type, Reason) ->
+    lager:notice("NkELASTIC unrecognized error: ~s, ~s", [Type, Reason]),
+    elastic_error.
+
+
+%% @private
+req_debug(_Method, _Path, _Body, _Code, _RespBody, _Time, false) ->
+    ok;
+
+req_debug(_Method, <<"_cluster/health">>, _Body, _Code, _RespBody, _Time, _Debug) ->
+    ok;
+
+req_debug(Method, Path, Body, Code, RespBody, Time, {true, true}) ->
+    DbgSendBody = case is_map(Body) orelse is_list(Body) of
+        true ->
+            <<"-> ", (nklib_json:encode_pretty(Body))/binary, "\n">>;
+        false ->
+            <<>>
+    end,
+    DbgRespBody = case is_map(RespBody) orelse is_list(RespBody) of
+        true ->
+            <<"<- ", (nklib_json:encode_pretty(RespBody))/binary, "\n">>;
+        false ->
+            <<"<- ", RespBody/binary, "\n">>
+    end,
+    ?REQ_DBG("~s ~s: ~p ~p msecs\n~s~s",
+        [Method, Path, Code, Time, DbgSendBody, DbgRespBody]);
+
+req_debug(Method, Path, _Body, Code, _RespBody, Time, {true, false}) ->
+    ?REQ_DBG("~s ~s: ~p ~p msecs", [Method, Path, Code, Time]).
+
+
+%% @private
+to_bin(T) when is_binary(T) -> T;
+to_bin(T) -> nklib_util:to_binary(T).
