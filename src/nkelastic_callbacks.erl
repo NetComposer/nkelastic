@@ -24,12 +24,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([elastic_get_indices/2, elastic_get_mappings/3, elastic_get_aliases/3, elastic_get_templates/2]).
--export([plugin_deps/0, plugin_syntax/0, plugin_config/2,
-         plugin_start/2, plugin_stop/2, service_init/2]).
--export([error_reason/2]).
-%%-export([api_server_cmd/2, api_server_syntax/4]).
--compile(export_all).
-
+-export([plugin_deps/0, plugin_syntax/0, plugin_config/2,plugin_start/2]).
 
 -include("nkelastic.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
@@ -132,57 +127,17 @@ plugin_start(Config, _Service) ->
     {ok, Config}.
 
 
-plugin_stop(Config, #{id:=_Id}) ->
-    {ok, Config}.
 
 
+%%service_init(#{id:=Id}=Service, State) ->
+%%    case nkelastic_util:create_service_indices(Service) of
+%%        ok ->
+%%            {ok, State};
+%%        {error, Error} ->
+%%            lager:error("NkELASTIC: Could not create indices for ~p: ~p", [Id, Error]),
+%%            {stop, nkelastic_create_indices}
+%%    end.
 
-service_init(#{id:=Id}=Service, State) ->
-    case nkelastic_util:create_service_indices(Service) of
-        ok ->
-            {ok, State};
-        {error, Error} ->
-            lager:error("NkELASTIC: Could not create indices for ~p: ~p", [Id, Error]),
-            {stop, nkelastic_create_indices}
-    end.
-
-
-
-%% ===================================================================
-%% Error Codes
-%% ===================================================================
-
-%% @doc
--spec error_reason(nkservice:lang(), nkservice:error()) ->
-	{binary(), binary()} | continue.
-
-error_reason(_, {es_error, Code, Reason}) -> 
-	{store_error, "Store error ~s: ~s", [Code, Reason]};
-
-error_reason(_Lang, _Error) ->
-	continue.
-
-
-
-% ===================================================================
-%% API Server Callbacks
-%% ===================================================================
-
-%%%% @private
-%%api_server_cmd(#api_req{class=elastic, subclass=Sub, cmd=Cmd}=Req, State) ->
-%%	nkelastic_api:cmd(Cmd, Sub, Req, State);
-%%
-%%api_server_cmd(_Req, _State) ->
-%%	continue.
-%%
-%%
-%%%% @private
-%%api_server_syntax(#api_req{class=elastic, subclass=Sub, cmd=Cmd},
-%%		   		  Syntax, Defaults, Mandatory) ->
-%%	nkelastic_api_syntax:syntax(Cmd, Sub, Syntax, Defaults, Mandatory);
-%%
-%%api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
-%%	continue.
 
 
 %% ===================================================================

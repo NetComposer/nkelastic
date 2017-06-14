@@ -20,22 +20,22 @@
 
 %% @doc NkELASTIC external API
 
--module(nkelastic_api).
+-module('nkelastic_api.erl').
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([health/1, get_nodes/1]).
--export([list_indices/1, get_indices/1, get_index/2]).
--export([get_count/1, get_count/2]).
--export([create_index/3, delete_index/2, update_index/3, update_or_create_index/3]).
--export([get_template/2, create_template/3, delete_template/2, get_all_templates/1]).
--export([update_analysis/3, add_mapping/4]).
--export([get_aliases/1, get_aliases/2, add_alias/4, delete_alias/3]).
--export([get/4, put/5, put_and_wait/5, delete/4, delete_and_wait/4, delete_by_query/4, delete_all/3]).
--export([search/4, count/4, explain/4, iterate_start/4, iterate_next/2, iterate_fun/6]).
+-export([health/2, get_nodes/2]).
+-export([list_indices/2, get_indices/2, get_index/3]).
+-export([get_count/2, get_count/3]).
+-export([create_index/4, delete_index/3, update_index/4, update_or_create_index/4]).
+-export([get_template/3, create_template/4, delete_template/3, get_all_templates/2]).
+-export([update_analysis/4, add_mapping/5]).
+-export([get_aliases/2, get_aliases/3, add_alias/5, delete_alias/4]).
+-export([get/5, put/6, put_and_wait/6, delete/5, delete_and_wait/5, delete_by_query/5, delete_all/4]).
+-export([search/, count/4, explain/4, iterate_start/4, iterate_next/2, iterate_fun/6]).
 
--type id() :: nkservice:id().
+-type srv_id(), cluster_id() :: nkservice:srv_id(), cluster_id().
 -type index() :: binary() | string().
--type obj_id() :: binary() | string().
+-type obj_srv_id(), cluster_id() :: binary() | string().
 -type type() :: binary() | string().
 -type error() :: {es_error, binary(), binary()} | term().
 -type status() :: geen | yellow | red.
@@ -48,11 +48,11 @@
 %% ===================================================================
 
 %% @doc Gets cluster health
--spec health(id) ->
+-spec health(srv_id(), cluster_id()) ->
 	{ok, status(), map()} | {error, error()}.
 
-health(Id) ->
-    case request(Id, get, "_cluster/health") of
+health(SrvId, Cluster) ->
+    case request(SrvId, Cluster, get, "_cluster/health") of
     	{ok, #{<<"status">>:=Status}=Data} ->
     		{ok, binary_to_atom(Status, latin1), Data};
     	{error, Error} ->
@@ -62,52 +62,52 @@ health(Id) ->
 
 %% @doc Gets node info
 %% https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-nodes.html
--spec get_nodes(id()) ->
+-spec get_nodes(srv_id(), cluster_id()) ->
 	{ok, [map()]} | {error, error()}.
 
-get_nodes(Id) ->  
-    request(Id, get, "_cat/nodes?format=json").
+get_nodes(SrvId, Cluster) ->
+    request(SrvId, Cluster, get, "_cat/nodes?format=json").
 
 
 %% @doc Lists all indices
--spec list_indices(id()) ->
+-spec list_indices(srv_id(), cluster_id()) ->
 	{ok, [binary()]} | {error, error()}.
 
-list_indices(Id) ->
-    request_lines(Id, get, "_cat/indices?h=index").
+list_indices(SrvId, Cluster) ->
+    request_lines(SrvId, Cluster, get, "_cat/indices?h=index").
 
 
 %% @doc Gets all indices with detailed info
--spec get_indices(id()) ->
+-spec get_indices(srv_id(), cluster_id()) ->
 	{ok, map()} | {error, error()}.
 
-get_indices(Id) ->
-    request(Id, get, "_all").
+get_indices(SrvId, Cluster) ->
+    request(SrvId, Cluster, get, "_all").
 
 
 %% @doc Gets info about and index
--spec get_index(id(), index()) ->
+-spec get_index(srv_id(), cluster_id(), index()) ->
 	{ok, map()} | {error, error()}.
 
-get_index(Id, Index) ->
-    request(Id, get, Index).
+get_index(SrvId, Cluster, Index) ->
+    request(SrvId, Cluster, get, Index).
 
 
 %% @doc Get number of objects
--spec get_count(id()) ->
+-spec get_count(srv_id(), cluster_id()) ->
 	{ok, integer()} | {error, error()}.
 
-get_count(Id) ->
-    get_count(Id, all).
+get_count(SrvId, Cluster) ->
+    get_count(SrvId, Cluster, all).
 
 
 %% @doc Get number of objects for an index
--spec get_count(id(), index()) ->
+-spec get_count(srv_id(), cluster_id(), index()) ->
 	{ok, integer()} | {error, error()}.
 
-get_count(Id, Index) ->
+get_count(SrvId, Cluster, Index) ->
 	Msg = ["_cat/count", post_index(Index), "?h=count"],
-    case request_lines(Id, get, Msg) of
+    case request_lines(SrvId, Cluster, get, Msg) of
         {ok, [Count]} ->
             {ok, to_int(Count)};
         {error, Error} ->
@@ -119,48 +119,48 @@ get_count(Id, Index) ->
 %% Options: number_of_shards, number_of_replicas, index_refresh_interval
 %% Also aliases (#{aliases => #{alias1 => #{}})
 %% and mappings (#{mappings => #{type1 => #{properties => ...}}})
--spec create_index(id(), index(), map()) ->
+-spec create_index(srv_id(), cluster_id(), index(), map()) ->
 	ok | {error, error()}.
 
-create_index(Id, Index, Opts) ->
+create_index(SrvId, Cluster, Index, Opts) ->
     Body = index_params(Opts),
-    request(Id, put, Index, Body).
+    request(SrvId, Cluster, put, Index, Body).
 
 
 %% @doc Deletes an index
--spec delete_index(id(), index()) ->
+-spec delete_index(srv_id(), cluster_id(), index()) ->
 	ok | {error, error()}.
 
-delete_index(Id, Index) ->
-    request(Id, delete, Index).
+delete_index(SrvId, Cluster, Index) ->
+    request(SrvId, Cluster, delete, Index).
 
 
 %% @doc Updates an index
 %% Options: refresh_interval, number_of_replicas
--spec update_index(id(), index(), map()) ->
+-spec update_index(srv_id(), cluster_id(), index(), map()) ->
 	ok | {error, error()}.
 
-update_index(Id, Index, Opts) ->
+update_index(SrvId, Cluster, Index, Opts) ->
     Body = #{index => Opts},
-    request(Id, put, [Index, "/_settings"], Body).
+    request(SrvId, Cluster, put, [Index, "/_settings"], Body).
 
 
 %% @doc Updates analysis
--spec update_analysis(id(), index(), map()) ->
+-spec update_analysis(srv_id(), cluster_id(), index(), map()) ->
 	ok | {error, error()}.
 
-update_analysis(Id, Index, Opts) ->
+update_analysis(SrvId, Cluster, Index, Opts) ->
     Body = #{analysis => Opts},
-    request(Id, put, [Index, "/_settings"], Body).
+    request(SrvId, Cluster, put, [Index, "/_settings"], Body).
 
 
 %% @doc Tries to update an index, or create it
 %% Options
-update_or_create_index(Id, Index, Opts) ->
-    case update_index(Id, Index, Opts) of
+update_or_create_index(SrvId, Cluster, Index, Opts) ->
+    case update_index(SrvId, Cluster, Index, Opts) of
         {error, index_not_found} ->
             lager:info("NkELASTIC: Index ~s not found, creating it", [Index]),
-            create_index(Id, Index, Opts);
+            create_index(SrvId, Cluster, Index, Opts);
         Other ->
             Other
     end.
@@ -168,37 +168,37 @@ update_or_create_index(Id, Index, Opts) ->
 
 %% @doc Creates an index template
 %% Same parameters as for indices
--spec create_template(id(), Name::binary(), map()) ->
+-spec create_template(srv_id(), cluster_id(), Name::binary(), map()) ->
     ok | {error, error()}.
 
-create_template(Id, Name, #{template:=Template}=Opts) ->
+create_template(SrvId, Cluster, Name, #{template:=Template}=Opts) ->
     Body1 = index_params(maps:remove(template, Opts)),
     Body2 = Body1#{template=>to_bin(Template)},
-    request(Id, put, ["_template/", Name], Body2).
+    request(SrvId, Cluster, put, ["_template/", Name], Body2).
 
 
 %% @doc Deletes an template
--spec delete_template(id(), Name::binary()) ->
+-spec delete_template(srv_id(), cluster_id(), Name::binary()) ->
     ok | {error, error()}.
 
-delete_template(Id, Name) ->
-    request(Id, delete, ["_template/", Name]).
+delete_template(SrvId, Cluster, Name) ->
+    request(SrvId, Cluster, delete, ["_template/", Name]).
 
 
 %% @doc Gets a template
--spec get_template(id(), Name::binary()) ->
+-spec get_template(srv_id(), cluster_id(), Name::binary()) ->
     {ok, map()} | {error, error()}.
 
-get_template(Id, Name) ->
-    request(Id, get, ["_template/", Name]).
+get_template(SrvId, Cluster, Name) ->
+    request(SrvId, Cluster, get, ["_template/", Name]).
 
 
 %% @doc Gets all templates
--spec get_all_templates(id()) ->
+-spec get_all_templates(srv_id(), cluster_id()) ->
     {ok, [binary()]} | {error, error()}.
 
-get_all_templates(Id) ->
-    case request(Id, get, "_template") of
+get_all_templates(SrvId, Cluster) ->
+    case request(SrvId, Cluster, get, "_template") of
         {ok, Map} ->
             {ok, maps:keys(Map)};
         {error, Error} ->
@@ -215,21 +215,21 @@ get_all_templates(Id) ->
 %%}
 %% Metafields: https://www.elastic.co/guide/en/elasticsearch/
 %%                     reference/current/mappnkseing-fields.html
--spec add_mapping(id(), index(), type(), map()) ->
+-spec add_mapping(srv_id(), cluster_id(), index(), type(), map()) ->
 	ok | {error, term()}.
 
-add_mapping(Id, Index, Type, Mappings) ->
+add_mapping(SrvId, Cluster, Index, Type, Mappings) ->
     {Metas, Props} = extract_mappings(Mappings),
     Body = Metas#{properties=>Props},
-    request(Id, put, [Index, "/", to_bin(Type), "/_mapping"], Body).
+    request(SrvId, Cluster, put, [Index, "/", to_bin(Type), "/_mapping"], Body).
 
 
 %% @doc Get all indices and their aliases
--spec get_aliases(id()) ->
+-spec get_aliases(srv_id(), cluster_id()) ->
 	{ok, #{index() => [Alias::binary()]}} | {error, error()}.
 
-get_aliases(Id) ->
-    case request(Id, get, ["_aliases"]) of
+get_aliases(SrvId, Cluster) ->
+    case request(SrvId, Cluster, get, ["_aliases"]) of
     	{ok, Map} ->
     		List = lists:foldl(
     			fun({Index, #{<<"aliases">>:=Aliases}}, Acc) ->
@@ -244,11 +244,11 @@ get_aliases(Id) ->
 
 
 %% @doc Get aliases for an index
--spec get_aliases(id(), index()) ->
+-spec get_aliases(srv_id(), cluster_id(), index()) ->
 	{ok, #{index() => [Alias::binary()]}}.
 
-get_aliases(Id, Index) ->
-    case request(Id, get, [Index, "/_aliases"]) of
+get_aliases(SrvId, Cluster, Index) ->
+    case request(SrvId, Cluster, get, [Index, "/_aliases"]) of
     	{ok, Map} ->
     		[{_, #{<<"aliases">>:=Aliases}}] = maps:to_list(Map),
     		{ok, maps:keys(Aliases)};
@@ -260,28 +260,28 @@ get_aliases(Id, Index) ->
 %% @doc Adds an alias to an index
 %% Opts can include
 % #{filter => #{key=>val}, index_routing=>... search_routing=>...}
--spec add_alias(id(), index(), binary(), map()) ->
+-spec add_alias(srv_id(), cluster_id(), index(), binary(), map()) ->
 	ok | {error, term()}.
 
-add_alias(Id, Index, Name, Opts) ->
-    request(Id, put, [Index, "/_aliases/", to_bin(Name)], Opts).
+add_alias(SrvId, Cluster, Index, Name, Opts) ->
+    request(SrvId, Cluster, put, [Index, "/_aliases/", to_bin(Name)], Opts).
 
 
 %% @doc Removes an alias from an index
--spec delete_alias(id(), index(), binary()) ->
+-spec delete_alias(srv_id(), cluster_id(), index(), binary()) ->
 	ok | {error, term()}.
 
-delete_alias(Id, Index, Name) ->
-    request(Id, delete, [Index, "/_alias/", to_bin(Name)]).
+delete_alias(SrvId, Cluster, Index, Name) ->
+    request(SrvId, Cluster, delete, [Index, "/_alias/", to_bin(Name)]).
 
 
 
 %% @doc Gets an object by id
--spec get(id(), index(), type(), obj_id()) ->
+-spec get(srv_id(), cluster_id(), index(), type(), obj_srv_id(), cluster_id()) ->
 	{ok, map(), integer()} | {error, term()}.
 
-get(Id, Index, Type, ObjId) ->
-    case request(Id, get, [Index, "/", to_bin(Type), "/", ObjId]) of
+get(SrvId, Cluster, Index, Type, ObjId) ->
+    case request(SrvId, Cluster, get, [Index, "/", to_bin(Type), "/", ObjId]) of
     	{ok, #{
     		<<"_source">> := Src,
     		<<"_version">> := Vsn
@@ -293,68 +293,68 @@ get(Id, Index, Type, ObjId) ->
 
 
 %% @doc Puts an object by id
--spec put(id(), index(), type(), obj_id(), map()) ->
+-spec put(srv_id(), cluster_id(), index(), type(), obj_srv_id(), cluster_id(), map()) ->
 	{ok, integer()} | {error, term()}.
 
-put(Id, Index, Type, ObjId, Obj) ->
-    case request_data(Id, put, [Index, "/", to_bin(Type), "/", ObjId], Obj) of
+put(SrvId, Cluster, Index, Type, ObjId, Obj) ->
+    case request_data(SrvId, Cluster, put, [Index, "/", to_bin(Type), "/", ObjId], Obj) of
     	{ok, #{<<"_version">>:=Vsn}} -> {ok, Vsn};
     	{error, Error} -> {error, Error}
     end.
 
 
 %% @doc Puts an object by id
--spec put_and_wait(id(), index(), type(), obj_id(), map()) ->
+-spec put_and_wait(srv_id(), cluster_id(), index(), type(), obj_srv_id(), cluster_id(), map()) ->
     {ok, integer()} | {error, term()}.
 
-put_and_wait(Id, Index, Type, ObjId, Obj) ->
-    case request_data(Id, put, [Index, "/", to_bin(Type), "/", ObjId, "?refresh=true"], Obj) of
+put_and_wait(SrvId, Cluster, Index, Type, ObjId, Obj) ->
+    case request_data(SrvId, Cluster, put, [Index, "/", to_bin(Type), "/", ObjId, "?refresh=true"], Obj) of
         {ok, #{<<"_version">>:=Vsn}} -> {ok, Vsn};
         {error, Error} -> {error, Error}
     end.
 
 
 %% @doc Deletes an object by id
--spec delete(id(), index(), type(), obj_id()) ->
+-spec delete(srv_id(), cluster_id(), index(), type(), obj_srv_id(), cluster_id()) ->
 	ok | {error, term()}.
 
-delete(Id, Index, Type, ObjId) ->
-    request(Id, delete, [Index, "/", to_bin(Type), "/", ObjId]).
+delete(SrvId, Cluster, Index, Type, ObjId) ->
+    request(SrvId, Cluster, delete, [Index, "/", to_bin(Type), "/", ObjId]).
 
 
 %% @doc Deletes an object by id
--spec delete_and_wait(id(), index(), type(), obj_id()) ->
+-spec delete_and_wait(srv_id(), cluster_id(), index(), type(), obj_srv_id(), cluster_id()) ->
     ok | {error, term()}.
 
-delete_and_wait(Id, Index, Type, ObjId) ->
-    request(Id, delete, [Index, "/", to_bin(Type), "/", ObjId, "?refresh=true"]).
+delete_and_wait(SrvId, Cluster, Index, Type, ObjId) ->
+    request(SrvId, Cluster, delete, [Index, "/", to_bin(Type), "/", ObjId, "?refresh=true"]).
 
 
 %% @doc Deletes all objects from a query
--spec delete_by_query(id(), index(), type(), map()) ->
+-spec delete_by_query(srv_id(), cluster_id(), index(), type(), map()) ->
     {ok, map()} | {error, term()}.
 
-delete_by_query(Id, Index, Type, Query) ->
+delete_by_query(SrvId, Cluster, Index, Type, Query) ->
     Url =  index_url(delete_by_query, Index, Type, <<>>),
-    request(Id, post, Url, #{query=>Query}).
+    request(SrvId, Cluster, post, Url, #{query=>Query}).
 
 
 %% @doc Gets all objects having a type
--spec delete_all(id(), index(), type()) ->
+-spec delete_all(srv_id(), cluster_id(), index(), type()) ->
     {ok, map()} | {error, term()}.
 
-delete_all(Id, Index, Type) ->
-    delete_by_query(Id, Index, Type, #{match_all=>#{}}).
+delete_all(SrvId, Cluster, Index, Type) ->
+    delete_by_query(SrvId, Cluster, Index, Type, #{match_all=>#{}}).
 
 
 %% @doc Search
 %% Query can be generated with nkelastic_search:query/1
--spec search(id(), index(), type(), query()) ->
+-spec search(srv_id(), cluster_id(), index(), type(), query()) ->
     {ok, integer(), Obj::[map()], Aggs::map(), Meta::map()} | {error, term()}.
 
-search(Id, Index, Type, Query) ->
+search(SrvId, Cluster, Index, Type, Query) ->
     Url =  index_url(search, Index, Type, <<>>),
-    case request(Id, post, Url, Query) of
+    case request(SrvId, Cluster, post, Url, Query) of
         {ok, Reply} ->
             #{
                 <<"took">> := Time,
@@ -374,12 +374,12 @@ search(Id, Index, Type, Query) ->
 
 
 %% @doc Count
--spec count(id(), index(), type(), query()) ->
+-spec count(srv_id(), cluster_id(), index(), type(), query()) ->
     {ok, integer()} | {error, term()}.
 
-count(Id, Index, Type, Query) ->
+count(SrvId, Cluster, Index, Type, Query) ->
     Url = index_url(count, Index, Type, <<>>),
-    case request(Id, post, Url, Query) of
+    case request(SrvId, Cluster, post, Url, Query) of
         {ok, #{<<"count">>:=Count}} ->
             {ok, Count};
         {error, Error} ->
@@ -388,12 +388,12 @@ count(Id, Index, Type, Query) ->
 
 
 %% @doc Search explain
--spec explain(id(), index(), type(), query()) ->
+-spec explain(srv_id(), cluster_id(), index(), type(), query()) ->
     {ok, integer()} | {error, term()}.
 
-explain(Id, Index, Type, Query) ->
+explain(SrvId, Cluster, Index, Type, Query) ->
     Url = index_url(explain, Index, Type, <<>>),
-    case request(Id, post, Url, Query) of
+    case request(SrvId, Cluster, post, Url, Query) of
         {ok, Data} ->
             {ok, Data};
         {error, Error} ->
@@ -402,12 +402,12 @@ explain(Id, Index, Type, Query) ->
 
 
 %% @doc Iterate
--spec iterate_start(id(), index(), type(), query()) ->
+-spec iterate_start(srv_id(), cluster_id(), index(), type(), query()) ->
     {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
 
-iterate_start(Id, Index, Type, Query) ->
+iterate_start(SrvId, Cluster, Index, Type, Query) ->
     Url =  index_url(search, Index, Type, <<"?scroll=1m">>),
-    case request(Id, post, Url, Query) of
+    case request(SrvId, Cluster, post, Url, Query) of
         {ok, Reply} ->
             #{
                 <<"_scroll_id">> := ScrollId,
@@ -427,12 +427,12 @@ iterate_start(Id, Index, Type, Query) ->
 
 
 %% @doc Search
--spec iterate_next(id(), binary()) ->
+-spec iterate_next(srv_id(), cluster_id(), binary()) ->
     {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
 
-iterate_next(Id, ScrollId) ->
+iterate_next(SrvId, Cluster, ScrollId) ->
     Body = #{scroll => <<"1m">>, scroll_id=>ScrollId},
-    case request(Id, post, <<"_search/scroll">>, Body) of
+    case request(SrvId, Cluster, post, <<"_search/scroll">>, Body) of
         {ok, Reply} ->
             #{
                 <<"_scroll_id">> := ScrollId2,
@@ -452,18 +452,18 @@ iterate_next(Id, ScrollId) ->
 
 
 %% @doc Iterate
--spec iterate_fun(id(), index(), type(), query(),
+-spec iterate_fun(srv_id(), cluster_id()), index(), type(), query(),
                   fun((map(), term()) -> {ok, term()} | {error, term()}), term()) ->
     {ok, term()} | {error, term()}.
 
-iterate_fun(Id, Index, Type, Query, Fun, Acc) ->
-    case iterate_start(Id, Index, Type, Query) of
+iterate_fun(SrvId, Cluster, Index, Type, Query, Fun, Acc) ->
+    case iterate_start(SrvId, Cluster, Index, Type, Query) of
         {ok, _ScrollId, _N, [], _} ->
             {ok, Acc};
         {ok, ScrollId, _N, Objs, _} ->
             case iterate_fun_fold(Objs, Fun, Acc) of
                 {ok, Acc2} ->
-                    iterate_fun2(Id, ScrollId, Fun, Acc2);
+                    iterate_fun2(SrvId, Cluster, ScrollId, Fun, Acc2);
                 {error, Error} ->
                     {error, Error}
             end;
@@ -517,14 +517,14 @@ extract_mappings([{Key, Val}|Rest], Metas, Prop) ->
 
 
 %% @private
-iterate_fun2(Id, ScrollId, Fun, Acc) ->
-    case iterate_next(Id, ScrollId) of
+iterate_fun2(SrvId, Cluster, ScrollId, Fun, Acc) ->
+    case iterate_next(SrvId, Cluster, ScrollId) of
         {ok, _ScrollId2, _N, [], _} ->
             {ok, Acc};
         {ok, ScrollId2, _N, Objs, _} ->
             case iterate_fun_fold(Objs, Fun, Acc) of
                 {ok, Acc2} ->
-                    iterate_fun2(Id, ScrollId2, Fun, Acc2);
+                    iterate_fun2(SrvId, Cluster, ScrollId2, Fun, Acc2);
                 {error, Error} ->
                     {error, Error}
             end;
@@ -553,13 +553,13 @@ iterate_fun_process(#{<<"_id">>:=ObjId}=Data, Fun, Acc) ->
 
 
 %% @private
-request(Id, Method, Path) ->
-    request(Id, Method, Path, <<>>).
+request(Method, Path, Opts) ->
+    request(Method, Path, <<>>, Opts).
 
 
 %% @private
-request(Id, Method, Path, Body) ->
-    case request_data(Id, Method, Path, Body) of
+request(Method, Path, Body, Opts) ->
+    case request_data(Method, Path, Body, Opts) of
     	{ok, _} when Method==put; Method==delete -> ok;
     	{ok, Data} -> {ok, Data};
     	{error, Error} -> {error, Error}
@@ -567,13 +567,15 @@ request(Id, Method, Path, Body) ->
 
 
 %% @private
-request_data(Id, Method, Path, Body) ->
-    nkelastic_srv:request(Id, Method, Path, Body).
+request_data(Method, Path, Body, Opts) ->
+    #{srv_id:=SrvId} = Opts,
+    ClusterId = maps:get(cluster_id, Opts, <<"main">>),
+    nkelastic_srv:request(SrvId, ClusterId, Method, Path, Body).
 
 
 %% @private
-request_lines(Id, Method, Path) ->
-    case request_data(Id, Method, Path, <<>>) of
+request_lines(Method, Path, Opts) ->
+    case request_data(Method, Path, <<>>, Opts) of
         {ok, List} ->
             List2 = binary:split(List, <<"\n">>, [global]),
             [<<>> | List3] = lists:reverse(List2),
