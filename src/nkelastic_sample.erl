@@ -38,8 +38,8 @@ start() ->
     {ok, List} = application:get_env(nkelastic, stores),
     Spec = #{
         callback => ?MODULE,
-        nkelastic => List
-        % debug => [{nkelastic, [full]}]
+        nkelastic => List,
+        debug => [{nkelastic, [full]}]
     },
     nkservice:start(?SRV, Spec).
 

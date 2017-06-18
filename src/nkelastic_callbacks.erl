@@ -107,6 +107,7 @@ plugin_syntax() ->
 
 
 plugin_config(#{nkelastic:=List}=Config, #{id:=SrvId}) ->
+
     case parse_stores(List, #{}) of
         {ok, ParsedMap} ->
             ServerId = nklib_util:to_atom(<<(nklib_util:to_binary(SrvId))/binary, "_nkelastic">>),

@@ -48,6 +48,7 @@
 -type status() :: geen | yellow | red.
 -type query() :: nkelastic_search:query().
 
+
 -type opts() ::
     #{
         srv_id => srv_id(),
@@ -63,7 +64,7 @@
         aliases => aliases(),
         number_of_shards => integer(),
         number_of_replicas => integer(),
-        index_refresh_interval => integer(),
+        refresh_interval => binary(),      %% "-1", "5s"
         atom() => term()
     }.
 
@@ -83,6 +84,13 @@
 -type iterate_fun() ::
     fun((map(), term()) -> {ok, term()} | {error, term()}).
 
+-type resp_meta() ::
+    #{
+        time => integer(),
+        vsn => integer(),
+        es_time => integer()
+    }.
+
 
 %% ===================================================================
 %% Cluster commands
@@ -91,12 +99,12 @@
 
 %% @doc Gets cluster health
 -spec health(opts()) ->
-    {ok, status(), map()} | {error, error()}.
+    {ok, status(), map(), resp_meta()} | {error, error()}.
 
 health(Opts) ->
     case request(get, "_cluster/health", Opts) of
-        {ok, #{<<"status">>:=Status}=Data} ->
-            {ok, binary_to_atom(Status, latin1), Data};
+        {ok, #{<<"status">>:=Status}=Data, Meta} ->
+            {ok, binary_to_atom(Status, latin1), Data, Meta};
         {error, Error} ->
             {error, Error}
     end.
@@ -105,7 +113,7 @@ health(Opts) ->
 %% @doc Gets node info
 %% https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-nodes.html
 -spec get_nodes(opts()) ->
-    {ok, [map()]} | {error, error()}.
+    {ok, [map()], resp_meta()} | {error, error()}.
 
 get_nodes(Opts) ->
     request(get, "_cat/nodes?format=json", Opts).
@@ -113,13 +121,13 @@ get_nodes(Opts) ->
 
 %% @doc Get number of objects for an index
 -spec get_count(opts()) ->
-    {ok, integer()} | {error, error()}.
+    {ok, integer(), resp_meta()} | {error, error()}.
 
 get_count(#{index:=Index}=Opts) ->
     Msg = ["_cat/count", post_index(Index), "?h=count"],
     case request_lines(get, Msg, Opts) of
-        {ok, [Count]} ->
-            {ok, to_int(Count)};
+        {ok, [Count], Meta} ->
+            {ok, to_int(Count), Meta};
         {error, Error} ->
             {error, Error}
     end;
@@ -136,7 +144,7 @@ get_count(Opts) ->
 
 %% @doc Lists all indices
 -spec list_indices(opts()) ->
-    {ok, [binary()]} | {error, error()}.
+    {ok, [binary()], resp_meta()} | {error, error()}.
 
 list_indices(Opts) ->
     request_lines(get, "_cat/indices?h=index", Opts).
@@ -144,7 +152,7 @@ list_indices(Opts) ->
 
 %% @doc Gets all indices with detailed info
 -spec get_indices(opts()) ->
-    {ok, map()} | {error, error()}.
+    {ok, map(), resp_meta()} | {error, error()}.
 
 get_indices(Opts) ->
     request(get, "_all", Opts).
@@ -152,19 +160,15 @@ get_indices(Opts) ->
 
 %% @doc Gets info about and index
 -spec get_index(opts()) ->
-    {ok, map()} | {error, error()}.
+    {ok, map(), resp_meta()} | {error, error()}.
 
 get_index(#{index:=Index}=Opts) ->
     request(get, Index, Opts).
 
 
 %% @doc Creates an index
-%% Name: letters, numbers, ".,-&_"
-%% Options: number_of_shards, number_of_replicas, index_refresh_interval
-%% Also aliases (#{aliases => #{alias1 => #{}})
-%% and mappings (#{mappings => #{type1 => #{properties => ...}}})
 -spec create_index(index_opts(), opts()) ->
-    ok | {error, error()}.
+    {ok, resp_meta()} | {error, error()}.
 
 create_index(IndexOpts, #{index:=Index}=Opts) ->
     Body = index_params(IndexOpts),
@@ -173,7 +177,7 @@ create_index(IndexOpts, #{index:=Index}=Opts) ->
 
 %% @doc Deletes an index
 -spec delete_index(opts()) ->
-    ok | {error, error()}.
+    {ok, resp_meta()} | {error, error()}.
 
 delete_index(#{index:=Index}=Opts) ->
     request(delete, Index, Opts).
@@ -182,7 +186,7 @@ delete_index(#{index:=Index}=Opts) ->
 %% @doc Updates an index
 %% Options: refresh_interval, number_of_replicas
 -spec update_index(index_opts(), opts()) ->
-    ok | {error, error()}.
+    {ok, resp_meta()} | {error, error()}.
 
 update_index(IndexOpts, #{index:=Index}=Opts) ->
     request(put, [Index, "/_settings"], #{index=>IndexOpts}, Opts).
@@ -190,7 +194,7 @@ update_index(IndexOpts, #{index:=Index}=Opts) ->
 
 %% @doc Updates analysis
 -spec update_analysis(analysis(), opts()) ->
-    ok | {error, error()}.
+    {ok, resp_meta()} | {error, error()}.
 
 update_analysis(Analysis, #{index:=Index}=Opts) ->
     request(put, [Index, "/_settings"], #{analysis=>Analysis}, Opts).
@@ -200,10 +204,12 @@ update_analysis(Analysis, #{index:=Index}=Opts) ->
 update_or_create_index(IndexOpts, #{index:=Index}=Opts) ->
     case update_index(IndexOpts, Opts) of
         {error, index_not_found} ->
-            lager:info("NkELASTIC: Index ~s not found, creating it", [Index]),
+            lager:notice("NkELASTIC: Index ~s not found, creating it", [Index]),
             create_index(IndexOpts, Opts);
-        Other ->
-            Other
+        {ok, Meta} ->
+            {ok, Meta};
+        {error, Error} ->
+            {error, Error}
     end.
 
 
@@ -217,7 +223,7 @@ update_or_create_index(IndexOpts, #{index:=Index}=Opts) ->
 %% Metafields: https://www.elastic.co/guide/en/elasticsearch/
 %%                     reference/current/mappnkseing-fields.html
 -spec add_mapping(map(), opts()) ->
-    ok | {error, term()}.
+    {ok, resp_meta()} | {error, error()}.
 
 add_mapping(Mapping, #{index:=Index, type:=Type}=Opts) ->
     {Metas, Props} = extract_mappings(Mapping),
@@ -233,7 +239,7 @@ add_mapping(Mapping, #{index:=Index, type:=Type}=Opts) ->
 
 %% @doc Gets a template
 -spec get_template(name(), opts()) ->
-    {ok, map()} | {error, error()}.
+    {ok, map(), resp_meta()} | {error, error()}.
 
 get_template(Name, Opts) ->
     request(get, ["_template/", Name], Opts).
@@ -241,12 +247,12 @@ get_template(Name, Opts) ->
 
 %% @doc Gets all templates
 -spec get_all_templates(opts()) ->
-    {ok, [binary()]} | {error, error()}.
+    {ok, [binary()], resp_meta()} | {error, error()}.
 
 get_all_templates(Opts) ->
     case request(get, "_template", Opts) of
-        {ok, Map} ->
-            {ok, maps:keys(Map)};
+        {ok, Map, Meta} ->
+            {ok, maps:keys(Map), Meta};
         {error, Error} ->
             {error, Error}
     end.
@@ -255,7 +261,7 @@ get_all_templates(Opts) ->
 %% @doc Creates an index template
 %% Same parameters as for indices
 -spec create_template(name(), index_opts(), opts()) ->
-    ok | {error, error()}.
+    {ok, resp_meta()} | {error, error()}.
 
 create_template(Name, IndexOpts, Opts) ->
     Body1 = index_params(IndexOpts),
@@ -265,7 +271,7 @@ create_template(Name, IndexOpts, Opts) ->
 
 %% @doc Deletes an template
 -spec delete_template(name(), opts()) ->
-    ok | {error, error()}.
+    {ok, resp_meta()} | {error, error()}.
 
 delete_template(Name, Opts) ->
     request(delete, ["_template/", Name], Opts).
@@ -278,27 +284,27 @@ delete_template(Name, Opts) ->
 
 %% @doc Get all indices and their aliases
 -spec get_aliases(opts()) ->
-    {ok, #{index() => [Alias::binary()]}} | {error, error()}.
+    {ok, #{index() => [Alias::binary()]}, resp_meta()} | {error, error()}.
 
 get_aliases(#{index:=Index}=Opts) ->
     case request(get, [Index, "/_aliases"], Opts) of
-        {ok, Map} ->
+        {ok, Map, Meta} ->
             [{_, #{<<"aliases">>:=Aliases}}] = maps:to_list(Map),
-            {ok, #{Index=>maps:keys(Aliases)}};
+            {ok, #{Index=>maps:keys(Aliases)}, Meta};
         {error, Error} ->
             {error, Error}
     end;
 
 get_aliases(Opts) ->
     case request(get, ["_aliases"], Opts) of
-        {ok, Map} ->
+        {ok, Map, Meta} ->
             List = lists:foldl(
                 fun({Index, #{<<"aliases">>:=Aliases}}, Acc) ->
                     [{Index, maps:keys(Aliases)}|Acc]
                 end,
                 [],
                 maps:to_list(Map)),
-            {ok, maps:from_list(List)};
+            {ok, maps:from_list(List), Meta};
         {error, Error} ->
             {error, Error}
     end.
@@ -308,7 +314,7 @@ get_aliases(Opts) ->
 %% Opts can include
 % #{filter => #{key=>val}, index_routing=>... search_routing=>...}
 -spec add_alias(name(), map(), opts()) ->
-    ok | {error, term()}.
+    {ok, resp_meta()} | {error, error()}.
 
 add_alias(Name, AliasOpts, #{index:=Index}=Opts) ->
     request(put, [Index, "/_aliases/", to_bin(Name)], AliasOpts, Opts).
@@ -316,7 +322,7 @@ add_alias(Name, AliasOpts, #{index:=Index}=Opts) ->
 
 %% @doc Removes an alias from an index
 -spec delete_alias(name(), opts()) ->
-    ok | {error, term()}.
+    {ok, resp_meta()} | {error, error()}.
 
 delete_alias(Name, #{index:=Index}=Opts) ->
     request(delete, [Index, "/_alias/", to_bin(Name)], Opts).
@@ -330,15 +336,16 @@ delete_alias(Name, #{index:=Index}=Opts) ->
 
 %% @doc Gets an object by id
 -spec get(obj_id(), opts()) ->
-    {ok, map(), integer()} | {error, term()}.
+    {ok, map(), resp_meta()} | {error, term()}.
 
 get(ObjId, #{index:=Index, type:=Type}=Opts) ->
     case request(get, [Index, "/", to_bin(Type), "/", ObjId], Opts) of
-        {ok, #{
-            <<"_source">> := Src,
-            <<"_version">> := Vsn
-        }} ->
-            {ok, Src, Vsn};
+        {ok, Data, Meta} ->
+            #{
+                <<"_source">> := Src,
+                <<"_version">> := Vsn
+            } = Data,
+            {ok, Src, Meta#{vsn=>Vsn}};
         {error, Error} ->
             {error, Error}
     end.
@@ -346,7 +353,7 @@ get(ObjId, #{index:=Index, type:=Type}=Opts) ->
 
 %% @doc Puts an object by id
 -spec put(obj_id(), obj(), opts()) ->
-    {ok, integer()} | {error, term()}.
+    {ok, resp_meta()} | {error, term()}.
 
 put(ObjId, Obj, #{index:=Index, type:=Type}=Opts) ->
     Refresh = case Opts of
@@ -354,14 +361,20 @@ put(ObjId, Obj, #{index:=Index, type:=Type}=Opts) ->
         _ -> ""
     end,
     case request_data(put, [Index, "/", to_bin(Type), "/", ObjId, Refresh], Obj, Opts) of
-        {ok, #{<<"_version">>:=Vsn}} -> {ok, Vsn};
-        {error, Error} -> {error, Error}
+        {ok, Data, Meta} ->
+            #{
+                <<"_version">> := Vsn,
+                <<"created">> := Created
+            } = Data,
+            {ok, Meta#{vsn=>Vsn, created=>Created}};
+        {error, Error} ->
+            {error, Error}
     end.
 
 
 %% @doc Deletes an object by id
 -spec delete(obj_id(), opts()) ->
-    ok | {error, term()}.
+    {ok, resp_meta()} | {error, error()}.
 
 delete(ObjId, #{index:=Index, type:=Type}=Opts) ->
     Refresh = case Opts of
@@ -373,7 +386,7 @@ delete(ObjId, #{index:=Index, type:=Type}=Opts) ->
 
 %% @doc Deletes all objects from a query
 -spec delete_by_query(query(), opts()) ->
-    {ok, map()} | {error, term()}.
+    {ok, map(), resp_meta()} | {error, term()}.
 
 delete_by_query(Query, #{index:=Index, type:=Type}=Opts) ->
     Url =  index_url(delete_by_query, Index, Type, <<>>),
@@ -382,7 +395,7 @@ delete_by_query(Query, #{index:=Index, type:=Type}=Opts) ->
 
 %% @doc Gets all objects having a type
 -spec delete_all(opts()) ->
-    {ok, map()} | {error, term()}.
+    {ok, map(), resp_meta()} | {error, term()}.
 
 delete_all(Opts) ->
     delete_by_query(#{match_all=>#{}}, Opts).
@@ -396,12 +409,12 @@ delete_all(Opts) ->
 %% @doc Search
 %% Query can be generated with nkelastic_search:query/1
 -spec search(query(), opts()) ->
-    {ok, integer(), Obj::[map()], Aggs::map(), Meta::map()} | {error, term()}.
+    {ok, integer(), [Obj::map()], Aggs::map(), resp_meta()} | {error, term()}.
 
 search(Query, #{index:=Index, type:=Type}=Opts) ->
     Url =  index_url(search, Index, Type, <<>>),
     case request(post, Url, Query, Opts) of
-        {ok, Reply} ->
+        {ok, Reply, Meta} ->
             #{
                 <<"took">> := Time,
                 <<"timed_out">> := TimedOut,
@@ -412,8 +425,8 @@ search(Query, #{index:=Index, type:=Type}=Opts) ->
             %% lager:info("Query took ~p msecs", [Time]),
             %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
             Aggs = maps:get(<<"aggregations">>, Reply, #{}),
-            Meta = #{time=>Time, timeout=>TimedOut},
-            {ok, Total, Hits, Aggs, Meta};
+            Meta2 = Meta#{es_time=>Time, timeout=>TimedOut},
+            {ok, Total, Hits, Aggs, Meta2};
         {error, Error} ->
             {error, Error}
     end.
@@ -421,7 +434,7 @@ search(Query, #{index:=Index, type:=Type}=Opts) ->
 
 %% @doc Count
 -spec count(query(), opts()) ->
-    {ok, integer()} | {error, term()}.
+    {ok, integer(), resp_meta()} | {error, term()}.
 
 count(Query, #{index:=Index, type:=Type}=Opts) ->
     Url = index_url(count, Index, Type, <<>>),
@@ -435,7 +448,7 @@ count(Query, #{index:=Index, type:=Type}=Opts) ->
 
 %% @doc Search explain
 -spec explain(query(), opts()) ->
-    {ok, integer()} | {error, term()}.
+    {ok, integer(), resp_meta()} | {error, term()}.
 
 explain(Query, #{index:=Index, type:=Type}=Opts) ->
     Url = index_url(explain, Index, Type, <<>>),
@@ -449,12 +462,12 @@ explain(Query, #{index:=Index, type:=Type}=Opts) ->
 
 %% @doc Iterate
 -spec iterate_start(query(), opts()) ->
-    {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
+    {ok, binary(), integer(), Obj::[map()], Meta::map(), resp_meta()} | {error, term()}.
 
 iterate_start(Query, #{index:=Index, type:=Type}=Opts) ->
     Url =  index_url(search, Index, Type, <<"?scroll=1m">>),
     case request(post, Url, Query, Opts) of
-        {ok, Reply} ->
+        {ok, Reply, Meta} ->
             #{
                 <<"_scroll_id">> := ScrollId,
                 <<"took">> := Time,
@@ -465,8 +478,8 @@ iterate_start(Query, #{index:=Index, type:=Type}=Opts) ->
             } = Reply,
             %% lager:info("Query took ~p msecs", [Time]),
             %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
-            Meta = #{time=>Time, timeout=>TimedOut},
-            {ok, ScrollId, Total, Hits, Meta};
+            Meta2 = Meta#{time=>Time, timeout=>TimedOut},
+            {ok, ScrollId, Total, Hits, Meta2};
         {error, Error} ->
             {error, Error}
     end.
@@ -474,12 +487,12 @@ iterate_start(Query, #{index:=Index, type:=Type}=Opts) ->
 
 %% @doc Search
 -spec iterate_next(term(), opts()) ->
-    {ok, binary(), integer(), Obj::[map()], Meta::map()} | {error, term()}.
+    {ok, binary(), integer(), Obj::[map()], Meta::map(), resp_meta()} | {error, term()}.
 
 iterate_next(ScrollId, Opts) ->
     Body = #{scroll => <<"1m">>, scroll_id=>ScrollId},
     case request(post, <<"_search/scroll">>, Body, Opts) of
-        {ok, Reply} ->
+        {ok, Reply, Meta} ->
             #{
                 <<"_scroll_id">> := ScrollId2,
                 <<"took">> := Time,
@@ -490,8 +503,8 @@ iterate_next(ScrollId, Opts) ->
             } = Reply,
             %% lager:info("Query took ~p msecs", [Time]),
             %% lager:info("~s", [nklib_json:encode_pretty(Reply)]),
-            Meta = #{time=>Time, timeout=>TimedOut},
-            {ok, ScrollId2, Total, Hits, Meta};
+            Meta2 = Meta#{time=>Time, timeout=>TimedOut},
+            {ok, ScrollId2, Total, Hits, Meta2};
         {error, Error} ->
             {error, Error}
     end.
@@ -499,7 +512,7 @@ iterate_next(ScrollId, Opts) ->
 
 %% @doc Iterate
 -spec iterate_fun(query(), iterate_fun(), Acc::term(), opts()) ->
-    {ok, term()} | {error, term()}.
+    {ok, term(), resp_meta()} | {error, term()}.
 
 iterate_fun(Query, Fun, Acc, Opts) ->
     case iterate_start(Query, Opts) of
@@ -515,16 +528,6 @@ iterate_fun(Query, Fun, Acc, Opts) ->
         {error, Error} ->
             {error, Error}
     end.
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -574,7 +577,7 @@ extract_mappings([{Key, Val}|Rest], Metas, Prop) ->
 
 %% @private
 iterate_fun2(ScrollId, Fun, Acc, Opts) ->
-    case iterate_next(ScrollId, Opts) of
+    case nkelastic:iterate_next(ScrollId, Opts) of
         {ok, _ScrollId2, _N, [], _} ->
             {ok, Acc};
         {ok, ScrollId2, _N, Objs, _} ->
@@ -616,8 +619,8 @@ request(Method, Path, Opts) ->
 %% @private
 request(Method, Path, Body, Opts) ->
     case request_data(Method, Path, Body, Opts) of
-        {ok, _} when Method==put; Method==delete -> ok;
-        {ok, Data} -> {ok, Data};
+        {ok, _, Meta} when Method==put; Method==delete -> {ok, Meta};
+        {ok, Data, Meta} -> {ok, Data, Meta};
         {error, Error} -> {error, Error}
     end.
 
@@ -626,16 +629,22 @@ request(Method, Path, Body, Opts) ->
 request_data(Method, Path, Body, Opts) ->
     #{srv_id:=SrvId} = Opts,
     ClusterId = maps:get(cluster_id, Opts, <<"main">>),
-    nkelastic_server:req(SrvId, ClusterId, Method, Path, Body).
+    Path2 = iolist_to_binary([<<"/">>, Path]),
+    case nkelastic_server:req(SrvId, ClusterId, Method, Path2, Body) of
+        {ok, Resp, Time} ->
+            {ok, Resp, #{time=>Time}};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @private
 request_lines(Method, Path, Opts) ->
     case request_data(Method, Path, <<>>, Opts) of
-        {ok, List} ->
+        {ok, List, Meta} ->
             List2 = binary:split(List, <<"\n">>, [global]),
             [<<>> | List3] = lists:reverse(List2),
-            {ok, lists:reverse(List3)};
+            {ok, lists:reverse(List3), Meta};
         {error, Error} ->
             {error, Error}
     end.

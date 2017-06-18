@@ -22,11 +22,14 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([req/4, req/5, req/6]).
+-export([req/4, req/5, req/6, get_pool/2]).
 -export([start_link/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
     handle_cast/2, handle_info/2]).
 
+
+-define(DEBUG, false).
+-define(REFRESH, 30).
 -define(CHECK_TIME, 10000).
 
 -define(LLOG(Type, Txt, Args, State),
@@ -34,6 +37,9 @@
 
 -define(REQ_DBG(Txt, Args),
     lager:debug("NkELASTIC Debug "++Txt, Args)).
+
+
+
 
 
 %% ===================================================================
@@ -65,7 +71,8 @@ req(SrvId, Pool, Method, Path, Body, Timeout) ->
             Debug = case nkservice_util:get_debug(SrvId, nkelastic) of
                 undefined -> false;
                 [] -> {true, false};
-                [full] -> {true, true}
+                [full] -> {true, true};
+                full -> {true, true}
             end,
             Fun = fun(Worker) ->
                 do_req(Worker, Method, to_bin(Path), Body, Timeout, Debug)
@@ -240,9 +247,9 @@ get_conns([{Conns, ConnOpts}|Rest], Acc) ->
     ConnOpts2 = ConnOpts1#{
         path => nklib_parse:path(maps:get(path, ConnOpts, <<>>)),
         idle_timeout => 0,
-        debug => false,
+        debug => ?DEBUG,
         packet_debug => false,
-        refresh_interval => 30,
+        refresh_interval => ?REFRESH,
         refresh_request => {get, <<"/">>, [], <<>>}
     },
     ConnOpts3 = case maps:get(user, ConnOpts, <<>>) of
@@ -305,35 +312,57 @@ do_req(Worker, Method, Path, Body, Timeout, Debug) ->
         error ->
             {error, {json_error, Body}};
         _ ->
-            do_req2(Worker, Method, Path, Headers, Body2, Timeout, Debug)
-    end.
-
-
-%% @private
-do_req2(Worker, Method, Path, Headers, Body, Timeout, Debug) ->
-    case nkhttpc_single:req(Worker, Method, Path, Headers, Body, Timeout) of
-        {ok, Code, RespHds, RespBody, Time} ->
-            RespBody2 = case nklib_util:get_value(<<"Content-Type">>, RespHds) of
-                <<"application/json", _/binary>> ->
-                    nklib_json:decode(RespBody);
-                _ ->
-                    case nklib_util:get_value(<<"content-type">>, RespHds) of
+            case nkhttpc_single:req(Worker, Method, Path, Headers, Body2, Timeout) of
+                {ok, Code, RespHds, RespBody, Time} ->
+                    RespBody2 = case nklib_util:get_value(<<"Content-Type">>, RespHds) of
                         <<"application/json", _/binary>> ->
                             nklib_json:decode(RespBody);
                         _ ->
-                            RespBody
-                    end
-            end,
-            req_debug(Method, Path, Body, Code, RespBody2, Time, Debug),
-            case (Code >= 200 andalso Code < 300) of
-                true ->
-                    {ok, RespBody2, Time};
-                false ->
-                    req_error(Code, RespBody2, Debug)
-            end;
-        {error, Error} ->
-            {error, Error}
+                            case nklib_util:get_value(<<"content-type">>, RespHds) of
+                                <<"application/json", _/binary>> ->
+                                    nklib_json:decode(RespBody);
+                                _ ->
+                                    RespBody
+                            end
+                    end,
+                    req_debug(Method, Path, Body, Code, RespBody, Time, Debug),
+                    case (Code>=200 andalso Code<300) of
+                        true ->
+                            {ok, RespBody2, Time};
+                        false ->
+                            req_error(Code, RespBody2, Debug)
+                    end;
+                {error, Error} ->
+                    {error, Error}
+            end
     end.
+
+
+%%%% @private
+%%do_req2(Worker, Method, Path, Headers, Body, Timeout, Debug) ->
+%%    case nkhttpc_single:req(Worker, Method, Path, Headers, Body, Timeout) of
+%%        {ok, Code, RespHds, RespBody, Time} ->
+%%            RespBody2 = case nklib_util:get_value(<<"Content-Type">>, RespHds) of
+%%                <<"application/json", _/binary>> ->
+%%                    nklib_json:decode(RespBody);
+%%                _ ->
+%%                    case nklib_util:get_value(<<"content-type">>, RespHds) of
+%%                        <<"application/json", _/binary>> ->
+%%                            nklib_json:decode(RespBody);
+%%                        _ ->
+%%                            RespBody
+%%                    end
+%%            end,
+%%            req_debug(Method, Path, Body, Code, RespBody2, Time, Debug),
+%%            case (Code >= 200 andalso Code < 300) of
+%%                true ->
+%%                    {ok, RespBody2, Time};
+%%                false ->
+%%                    req_error(Code, RespBody2, Debug)
+%%            end;
+%%        {error, Error} ->
+%%            {error, Error}
+%%    end.
 
 
 %% @private
@@ -347,28 +376,29 @@ req_error(_Code, #{<<"error">>:=Error}, Debug) ->
     end,
     {error, get_error(Type, Reason)};
 
+req_error(404, _Body, _Debug) ->
+    {error, object_not_found};
+
 req_error(400, Body, _Debug) ->
     lager:notice("NkELASTIC invalid request: ~p", [Body]),
-    {error, internal_error};
+    {error, invalid_request};
 
 req_error(Code, Body, _Debug) ->
     lager:notice("NkELASTIC unrecognized error: ~p ~p", [Code, Body]),
-    {error, elastic_error}.
+    {error, unknown_error}.
 
 
 %% @private
-get_error(<<"index_not_found_exception">>, _Reason) ->
-    index_not_found;
-
-get_error(<<"search_phase_execution_exception">>, _Reason) ->
-    search_error;
-
-get_error(<<"illegal_argument_exception">>, _Reason) ->
-    illegal_argument;
-
 get_error(Type, Reason) ->
-    lager:notice("NkELASTIC unrecognized error: ~s, ~s", [Type, Reason]),
-    elastic_error.
+    case Type of
+        <<"index_not_found_exception">> -> index_not_found;
+        <<"search_phase_execution_exception">> -> search_error;
+        <<"illegal_argument_exception">> -> illegal_argument;
+        <<"index_already_exists_exception">> -> index_already_exists;
+        _ ->
+            lager:notice("NkELASTIC unrecognized error: ~s, ~s", [Type, Reason]),
+            Type
+    end.
 
 
 %% @private
