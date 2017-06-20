@@ -5,3 +5,5 @@ deps
 /nkelastic.iml
 /.rebar3
 /_build
+nkdomain.version
+.idea
