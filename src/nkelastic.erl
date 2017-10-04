@@ -65,6 +65,7 @@
         number_of_shards => integer(),
         number_of_replicas => integer(),
         refresh_interval => binary(),      %% "-1", "5s"
+        'mapper.dynamic' => boolean(),
         atom() => term()
     }.
 
