@@ -103,7 +103,7 @@ query(Spec) ->
                 [] ->
                     Query1;
                 Filters ->
-                    Query1#{filter => Filters}
+                    maps:merge(Query1, Filters)
             end,
             Body3 = case map_size(Query2) of
                 0 ->
@@ -118,7 +118,7 @@ query(Spec) ->
                     Body3
             end,
             Body5 = maps:without([filters, simple_query, simple_query_opts], Body4),
-            % lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
+            lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
             {ok, Body5};
         {error, Error} ->
             {error, Error}
@@ -202,7 +202,10 @@ fun_syntax(fields, Val, _Meta) ->
     end;
 
 fun_syntax(filters, Map, _Meta) when is_map(Map) ->
-    fun_syntax_filters(maps:to_list(Map), []);
+    List = maps:to_list(Map),
+    Filter1 = fun_syntax_filters(List, [], #{}),
+    Filter2= fun_syntax_not_filters(List, [], Filter1),
+    {ok, Filter2};
 
 fun_syntax(filters, _Val, _Meta) ->
     error.
@@ -290,14 +293,26 @@ syntax_sort_map(Name, _Meta) ->
 
 
 %% @private
-fun_syntax_filters([], Acc) ->
-    {ok, Acc};
+fun_syntax_filters([], [], Filter) ->
+    Filter;
 
-fun_syntax_filters([{Field, Val}|Rest], Acc) ->
-    Filter = fun_syntax_get_filter(Field, Val),
-    fun_syntax_filters(Rest, [Filter|Acc]).
+fun_syntax_filters([], Acc, Filter) ->
+    Filter#{filter=>Acc};
+
+fun_syntax_filters([{Field, Val}|Rest], Acc, Filter) ->
+    Acc2 = case fun_syntax_get_filter(Field, Val) of
+        ignore ->
+            Acc;
+        Term ->
+            [Term|Acc]
+    end,
+    fun_syntax_filters(Rest, Acc2, Filter).
+
 
 %% @private
+fun_syntax_get_filter(<<N, "_", Field/binary>>, Data) when N >= $0, N =< $9 ->
+    fun_syntax_get_filter(Field, Data);
+
 fun_syntax_get_filter(Field, <<"childs_of:/">>) ->
     #{wildcard => #{Field => <<"/?*">>}};
 fun_syntax_get_filter(Field, <<"childs_of:", Data/binary>>) ->
@@ -336,12 +351,45 @@ fun_syntax_get_filter(Field, <<"<", Data/binary>>) ->
         _ ->
             #{range => #{Field => #{lt => term(Data)}}}
     end;
-fun_syntax_get_filter(Field, <<"!", Data/binary>>) ->
-    #{bool => #{must_not => #{term => #{Field => term(Data)}}}};
+fun_syntax_get_filter(_Field, <<"!", _Data/binary>>) ->
+    ignore;
+fun_syntax_get_filter(_Field, <<"not_child_of:", _Data/binary>>) ->
+    ignore;
 fun_syntax_get_filter(Field, Values) when is_list(Values)->
     #{terms => #{Field => Values}};
 fun_syntax_get_filter(Field, Value) ->
     #{term => #{Field => Value}}.
+
+
+%% @private
+fun_syntax_not_filters([], [], Filter) ->
+    Filter;
+
+fun_syntax_not_filters([], Acc, Filter) ->
+    Filter#{must_not => Acc};
+
+fun_syntax_not_filters([{Field, Val}|Rest], Acc, Filter) ->
+    Acc2 = case fun_syntax_get_not_filter(Field, Val) of
+        ignore ->
+            Acc;
+        Term ->
+            [Term|Acc]
+    end,
+    fun_syntax_not_filters(Rest, Acc2, Filter).
+
+%% @private Negative filters
+fun_syntax_get_not_filter(<<N, "_", Field/binary>>, Data) when N >= $0, N =< $9 ->
+    fun_syntax_get_not_filter(Field, Data);
+
+fun_syntax_get_not_filter(Field, <<"!", Data/binary>>) ->
+    #{term => #{Field => term(Data)}};
+fun_syntax_get_not_filter(Field, <<"not_child_of:", Data/binary>>) ->
+    #{prefix => #{Field => Data}};
+fun_syntax_get_not_filter(_Field, _Value) ->
+    ignore.
+
+
+
 
 
 %% @private
