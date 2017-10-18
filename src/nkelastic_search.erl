@@ -41,6 +41,7 @@
 %% "<..."
 %% "<=..."
 %% "<...-...>"
+%% "<<...-...>>"
 %% "<>"
 %% "!..."
 %%
@@ -309,6 +310,19 @@ fun_syntax_get_filter(Field, <<">", Data/binary>>) ->
     #{range => #{Field => #{gt => term(Data)}}};
 fun_syntax_get_filter(Field, <<"<=", Data/binary>>) ->
     #{range => #{Field => #{lte => term(Data)}}};
+fun_syntax_get_filter(Field, <<"<<", Data/binary>>) ->
+    Size = byte_size(Data) - 1,
+    case Size>0 andalso binary:at(Data, Size) of
+        $> ->
+            case binary:split(<<Data:Size/binary>>, <<"-">>) of
+                [Data1, Data2] ->
+                    #{range => #{Field => #{gt=>term(Data1), lt=>term(Data2)}}};
+                _ ->
+                    #{}
+            end;
+        _ ->
+            #{}
+    end;
 fun_syntax_get_filter(Field, <<"<", Data/binary>>) ->
     Size = byte_size(Data) - 1,
     case Size>0 andalso binary:at(Data, Size) of
