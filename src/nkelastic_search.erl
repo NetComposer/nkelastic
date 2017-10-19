@@ -311,7 +311,7 @@ fun_syntax_get_filter(Field, <<">", Data/binary>>) ->
 fun_syntax_get_filter(Field, <<"<=", Data/binary>>) ->
     #{range => #{Field => #{lte => term(Data)}}};
 fun_syntax_get_filter(Field, <<"<<", Data/binary>>) ->
-    Size = byte_size(Data) - 1,
+    Size = byte_size(Data) - 2,
     case Size>0 andalso binary:at(Data, Size) of
         $> ->
             case binary:split(<<Data:Size/binary>>, <<"-">>) of
