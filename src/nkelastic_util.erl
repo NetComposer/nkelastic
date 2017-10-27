@@ -24,14 +24,11 @@
 
 
 %% @private
-parse_url({nkelastic_conns, Multi}) ->
-    {ok, {nkelastic_conns, Multi}};
-
 parse_url(Url) ->
     % Protocol is used to get transport information only
     case nkpacket_resolve:resolve(Url, #{protocol=>nkelastic_server}) of
-        {ok, Multi} ->
-            {ok, {nkelastic_conns, Multi}};
+        {ok, _} ->
+            ok;
         {error, Error} ->
             {error, Error}
     end.

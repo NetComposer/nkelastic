@@ -33,16 +33,6 @@
 
 
 %% @doc
-start_link({_Id, []}) ->
-    {error, no_connections};
-
-start_link({Id, [{Conns, ConnOpts}|Rest]}) ->
-    case nkhttpc_single:start_link(Id, Conns, ConnOpts) of
-        {ok, Pid} ->
-            {ok, Pid};
-        {error, Error} when Rest == [] ->
-            {error, Error};
-        {error, _} ->
-            start_link({Id, Rest})
-    end.
+start_link({Id, Conns}) ->
+    nkhttpc_single:start_link(Id, Conns).
 

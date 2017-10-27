@@ -141,7 +141,6 @@ init([SrvId, Name, Pools]) ->
         pools = #{},
         configs = Pools
     },
-    lager:error("NKLOG ConnMAP ~p", [Pools]),
     process_flag(trap_exit, true),
     self() ! start_pools,
     {ok, State}.
@@ -220,47 +219,66 @@ terminate(_Reason, _State) ->
 %% Internal
 %% ===================================================================
 
-%%%% @private
+%% @private
 start_pools([], State) ->
     State;
 
-start_pools([#{id:=Id, url:={nkelastic_conns, Conns}=Config}|Rest], #state{pools=Pools} = State) ->
+start_pools([#{id:=Id, url:=Url}=Config|Rest], #state{pools=Pools} = State) ->
     case maps:is_key(Id, Pools) of
         true ->
             start_pools(Rest, State);
         false ->
-            HttpConns = get_conns(Conns, []),
             try
-                case test_connect(Id, HttpConns, State) of
-                    ok ->
-                        Opts = maps:get(opts, Config, #{}),
-                        PoolOpts = [
-                            {worker_module, nkelastic_worker},
-                            {size, maps:get(pool_size, Opts, 5)},
-                            {max_overflow, maps:get(pool_overflow, Opts, 10)}
-                        ],
-                        {ok, Pid} = poolboy:start_link(PoolOpts, {Id, HttpConns}),
-                        ?LLOG(notice, "started pool '~s'", [Id], State),
-                        Pools2 = Pools#{Id => Pid},
-                        start_pools(Rest, State#state{pools=Pools2});
+                case get_conns(Url) of
+                    {ok, []} ->
+                        ?LLOG(warning, "could not start pool '~s' resolve error: no_hosts", [Id], State),
+                        start_pools(Rest, State);
+                    {ok, Conns} ->
+                        case test_connect(Id, Conns, State) of
+                            ok ->
+                                % Any of the hosts has replied
+                                Opts = maps:get(opts, Config, #{}),
+                                PoolOpts = [
+                                    {worker_module, nkelastic_worker},
+                                    {size, maps:get(pool_size, Opts, 5)},
+                                    {max_overflow, maps:get(pool_overflow, Opts, 10)}
+                                ],
+                                {ok, Pid} = poolboy:start_link(PoolOpts, {Id, Conns}),
+                                ?LLOG(notice, "started pool '~s'", [Id], State),
+                                Pools2 = Pools#{Id => Pid},
+                                start_pools(Rest, State#state{pools=Pools2});
+                            {error, Error} ->
+                                ?LLOG(warning, "could not start pool '~s': ~p", [Id, Error], State),
+                                start_pools(Rest, State)
+                        end;
                     {error, Error} ->
-                        ?LLOG(warning, "could not start pool '~s': ~p", [Id, Error], State),
+                        ?LLOG(warning, "could not start pool '~s' resolve error: ~p", [Id, Error], State),
                         start_pools(Rest, State)
                 end
             catch
                 error:CError ->
                     Trace = erlang:get_stacktrace(),
-                    ?LLOG(warning, "could not start pool1 '~s': ~p (~p)", [Id, CError, Trace], State),
+                    ?LLOG(warning, "could not start pool '~s': ~p (~p)", [Id, CError, Trace], State),
                     start_pools(Rest, State)
             end
     end.
 
 
 %% @private
-get_conns([], Acc) ->
-    Acc;
+get_conns(Url) ->
+    case nkpacket_resolve:resolve(Url, #{protocol=>?MODULE}) of
+        {ok, Conns} ->
+            do_get_conns(Conns, []);
+        {error, Error} ->
+            {error, Error}
+    end.
 
-get_conns([Conn|Rest], Acc) ->
+
+%% @private
+do_get_conns([], Acc) ->
+    {ok, Acc};
+
+do_get_conns([Conn|Rest], Acc) ->
     #nkconn{transp=Transp, ip=Ip, port=Port, opts=ConnOpts} = Conn,
     Opts2 = maps:with([host], ConnOpts),
     Opts3 = Opts2#{
@@ -287,15 +305,15 @@ get_conns([Conn|Rest], Acc) ->
         0 when Proto == tls -> 443;
         _ -> Port
     end,
-    get_conns(Rest, [{{Proto, Ip, Port2}, Opts4}|Acc]).
+    do_get_conns(Rest, [{Proto, Ip, Port2, Opts4}|Acc]).
 
 
 %% @private
 test_connect(_Id, [], _State) ->
     {error, no_connections};
 
-test_connect(Id, [{Conn, Opts}|Rest], State) ->
-    case nkhttpc_single:start(Id, [Conn], Opts) of
+test_connect(Id, [Conn|Rest], State) ->
+    case nkhttpc_single:start(Id, Conn) of
         {ok, Pid} ->
             nkhttpc_single:stop(Pid),
             ok;
