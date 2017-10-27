@@ -23,10 +23,12 @@
 -behaviour(gen_server).
 
 -export([req/4, req/5, req/6, get_pool/2]).
+-export([transports/1, default_port/1, resolve_opts/0]).
 -export([start_link/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
     handle_cast/2, handle_info/2]).
 
+-include_lib("nkpacket/include/nkpacket.hrl").
 
 -define(DEBUG, false).
 -define(REFRESH, 30).
@@ -97,6 +99,23 @@ start_link(SrvId, Name, ConnMap) ->
 
 
 
+%% ===================================================================
+%% Transport behaviour
+%% ===================================================================
+
+transports(_) ->
+    [http, https].
+
+default_port(_) ->
+    9200.
+
+resolve_opts() ->
+    #{resolve_type=>listen}.
+
+
+
+
+
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
@@ -105,7 +124,7 @@ start_link(SrvId, Name, ConnMap) ->
     srv_id :: nkservice:id(),
     name :: atom(),
     pools = #{} :: #{Id::binary() => pid()},
-    conn_map = [] :: [{Id::binary(), [{[Conn::list()], Opts::map()}]}]
+    configs = [] :: [map()]
 }).
 
 
@@ -115,13 +134,14 @@ start_link(SrvId, Name, ConnMap) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([SrvId, Name, ConnMap]) ->
+init([SrvId, Name, Pools]) ->
     State = #state{
         srv_id = SrvId,
         name = Name,
         pools = #{},
-        conn_map = maps:to_list(ConnMap)
+        configs = Pools
     },
+    lager:error("NKLOG ConnMAP ~p", [Pools]),
     process_flag(trap_exit, true),
     self() ! start_pools,
     {ok, State}.
@@ -158,8 +178,8 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(start_pools, #state{conn_map=ConnMap}=State) ->
-    State2 = start_pools(ConnMap, State),
+handle_info(start_pools, #state{configs=Configs}=State) ->
+    State2 = start_pools(Configs, State),
     erlang:send_after(?CHECK_TIME, self(), start_pools),
     {noreply, State2};
 
@@ -204,19 +224,20 @@ terminate(_Reason, _State) ->
 start_pools([], State) ->
     State;
 
-start_pools([{Id, {IdOpts, ConnList}}|Rest], #state{pools=Pools} = State) ->
+start_pools([#{id:=Id, url:={nkelastic_conns, Conns}=Config}|Rest], #state{pools=Pools} = State) ->
     case maps:is_key(Id, Pools) of
         true ->
             start_pools(Rest, State);
         false ->
-            HttpConns = get_conns(ConnList, []),
+            HttpConns = get_conns(Conns, []),
             try
                 case test_connect(Id, HttpConns, State) of
                     ok ->
+                        Opts = maps:get(opts, Config, #{}),
                         PoolOpts = [
                             {worker_module, nkelastic_worker},
-                            {size, maps:get(pool_size, IdOpts, 5)},
-                            {max_overflow, maps:get(pool_overflow, IdOpts, 10)}
+                            {size, maps:get(pool_size, Opts, 5)},
+                            {max_overflow, maps:get(pool_overflow, Opts, 10)}
                         ],
                         {ok, Pid} = poolboy:start_link(PoolOpts, {Id, HttpConns}),
                         ?LLOG(notice, "started pool '~s'", [Id], State),
@@ -239,12 +260,10 @@ start_pools([{Id, {IdOpts, ConnList}}|Rest], #state{pools=Pools} = State) ->
 get_conns([], Acc) ->
     Acc;
 
-get_conns([{[], _Opts}|Rest2], Acc) ->
-    get_conns(Rest2, Acc);
-
-get_conns([{Conns, ConnOpts}|Rest], Acc) ->
-    ConnOpts1 = maps:with([host], ConnOpts),
-    ConnOpts2 = ConnOpts1#{
+get_conns([Conn|Rest], Acc) ->
+    #nkconn{transp=Transp, ip=Ip, port=Port, opts=ConnOpts} = Conn,
+    Opts2 = maps:with([host], ConnOpts),
+    Opts3 = Opts2#{
         path => nklib_parse:path(maps:get(path, ConnOpts, <<>>)),
         idle_timeout => 0,
         debug => ?DEBUG,
@@ -252,38 +271,31 @@ get_conns([{Conns, ConnOpts}|Rest], Acc) ->
         refresh_interval => ?REFRESH,
         refresh_request => {get, <<"/">>, [], <<>>}
     },
-    ConnOpts3 = case maps:get(user, ConnOpts, <<>>) of
+    Opts4 = case maps:get(user, ConnOpts, <<>>) of
        <<>> ->
-           ConnOpts2;
+           Opts3;
        User ->
            Pass = maps:get(password, ConnOpts, <<>>),
-           ConnOpts2#{auth => {basic, User, Pass}}
+           Opts3#{auth => {basic, User, Pass}}
     end,
-    Conns2 = lists:map(
-        fun({_, HttpProto, Ip, Port}) ->
-            Proto = case HttpProto of
-                http -> tcp;
-                https -> tls
-            end,
-            Port2 = case Port of
-                0 when Proto == tcp -> 80;
-                0 when Proto == tls -> 443;
-                _ -> Port
-            end,
-            {Proto, Ip, Port2}
-        end,
-        Conns),
-    get_conns(Rest, [{Conns2, ConnOpts3}|Acc]).
+    Proto = case Transp of
+        http -> tcp;
+        https -> tls
+    end,
+    Port2 = case Port of
+        0 when Proto == tcp -> 80;
+        0 when Proto == tls -> 443;
+        _ -> Port
+    end,
+    get_conns(Rest, [{{Proto, Ip, Port2}, Opts4}|Acc]).
 
 
-
-%%
 %% @private
 test_connect(_Id, [], _State) ->
     {error, no_connections};
 
-test_connect(Id, [{Conns, ConnOpts}|Rest], State) ->
-    case nkhttpc_single:start(Id, Conns, ConnOpts) of
+test_connect(Id, [{Conn, Opts}|Rest], State) ->
+    case nkhttpc_single:start(Id, [Conn], Opts) of
         {ok, Pid} ->
             nkhttpc_single:stop(Pid),
             ok;

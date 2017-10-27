@@ -20,7 +20,21 @@
 
 -module(nkelastic_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([create_service_indices/1]).
+-export([parse_url/1, create_service_indices/1]).
+
+
+%% @private
+parse_url({nkelastic_conns, Multi}) ->
+    {ok, {nkelastic_conns, Multi}};
+
+parse_url(Url) ->
+    % Protocol is used to get transport information only
+    case nkpacket_resolve:resolve(Url, #{protocol=>nkelastic_server}) of
+        {ok, Multi} ->
+            {ok, {nkelastic_conns, Multi}};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @private
