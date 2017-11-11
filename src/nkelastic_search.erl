@@ -48,7 +48,7 @@
 
 -type filter_field() :: atom() | binary().
 
--type filter_op() :: eq | values | gt | gte | lt | lte | prefix | subdir.
+-type filter_op() :: eq | values | gt | gte | lt | lte | prefix | subdir | exists.
 
 -type simple_query_opts() ::
     #{
@@ -58,7 +58,6 @@
 
 -type filter_spec() ::
     {filter_field(), filter_op(), Val::term()} |
-    {filter_field(), exists} |
     {simple_query, Query::binary(), simple_query_opts()}.
 
 -type filter_list() :: [filter_spec() | {'and'|'or'|'not', filter_spec()|[filter_spec()]}].
@@ -66,7 +65,6 @@
 
 -type search_spec() ::
     #{
-        plan_b => boolean(),
         from => integer(),
         size => integer(),
         fields => [binary()],
@@ -104,7 +102,7 @@ query(Spec) ->
     Syntax1 = syntax(),
     Syntax2 = Syntax1#{sort_fields_map => ignore, aggs => ignore},
     case nklib_syntax:parse(Spec, Syntax2, Meta) of
-        {ok, #{plan_b:=true}=Parsed, _} ->
+        {ok, #{filter_list:=FilterList}=Parsed, _} ->
             Body1 = maps:with([from, size, fields, sort], Parsed),
             % A specific '_source' can be added by syntax fun. If not, add it
             Body2 = case maps:is_key('_source', Body1) of
@@ -113,11 +111,10 @@ query(Spec) ->
                 false ->
                     Body1#{'_source' => true}
             end,
-            lager:error("NKLOG PLAN B ~p", [Parsed]),
-            Body3 = case maps:get(filter_list, Parsed, []) of
+            Body3 = case FilterList  of
                 [] ->
                     Body2;
-                FilterList ->
+                _ ->
                     % We must use a compound query, best suited is 'bool'
                     % We use the 'filter' part of bool to set 'filter context'
                     % We use another compound now that we are in filter context
@@ -176,7 +173,6 @@ query(Spec) ->
 %% @private
 syntax() ->
     #{
-        plan_b => boolean,
         from => {integer, 0, none},
         size => {integer, 0, none},
         sort => fun ?MODULE:fun_syntax/3,
@@ -437,8 +433,20 @@ fun_syntax_filter_list(Ctx, [{Key, subdir, Path}|Rest], Acc) ->
     end,
     fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, Term, Acc));
 
-fun_syntax_filter_list(Ctx, [{Key, exists}|Rest], Acc) ->
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{exists => #{field => Key}}, Acc));
+fun_syntax_filter_list(Ctx, [{Key, exists, Val}|Rest], Acc) ->
+    case nklib_syntax:spec(boolean, Val) of
+        {ok, true} ->
+            fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{exists => #{field => Key}}, Acc));
+        {ok, false} when Ctx == filter ->
+            fun_syntax_filter_list(Ctx, [{'not', {Key, exists, true}}|Rest], Acc);
+        {ok, false} when Ctx == must_not ->
+            fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{exists => #{field => Key}}, Acc));
+        {ok, false} when Ctx == should ->
+            lager:error("NKLOG Used exists false in OR"),
+            error;
+        error ->
+            error
+    end;
 
 fun_syntax_filter_list(Ctx, [{simple_query, Str}|Rest], Acc) ->
     fun_syntax_filter_list(Ctx, [{simple_query, Str, #{}}|Rest], Acc);
@@ -480,7 +488,8 @@ fun_syntax_filter_list(filter, [{'or', List}|Rest], Acc) when is_list(List) ->
 fun_syntax_filter_list(filter, [{'or', Op}|Rest], Acc) ->
     fun_syntax_filter_list(filter, [{'or', [Op]}|Rest], Acc);
 
-fun_syntax_filter_list(_Ctx, [_Other|_], _Acc) ->
+fun_syntax_filter_list(_Ctx, [_Other|_]=L, _Acc) ->
+    lager:error("NKLOG Search Error (~p,~p,~p)", [_Ctx, L, _Acc]),
     error.
 
 

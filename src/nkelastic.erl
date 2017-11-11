@@ -414,6 +414,7 @@ delete_all(Opts) ->
 
 search(Query, #{index:=Index, type:=Type}=Opts) ->
     Url =  index_url(search, Index, Type, <<>>),
+    % lager:info("ES Query: ~s", [nklib_json:encode_pretty(Query)]),
     case request(post, Url, Query, Opts) of
         {ok, Reply, Meta} ->
             #{
