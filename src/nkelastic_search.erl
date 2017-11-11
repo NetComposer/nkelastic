@@ -48,7 +48,7 @@
 
 -type filter_field() :: atom() | binary().
 
--type filter_op() :: eq | values | gt | gte | lt | lte | prefix | subdir | exists.
+-type filter_op() :: eq | values | gt | gte | lt | lte | prefix | subdir | exists | fuzzy | {fuzzy, map()}.
 
 -type simple_query_opts() ::
     #{
@@ -423,6 +423,26 @@ fun_syntax_filter_list(Ctx, [{Key, lte, Val}|Rest], Acc) ->
 
 fun_syntax_filter_list(Ctx, [{Key, prefix, Val}|Rest], Acc) ->
     fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{prefix => #{Key => Val}}, Acc));
+
+fun_syntax_filter_list(Ctx, [{Key, fuzzy, Val}|Rest], Acc) ->
+    fun_syntax_filter_list(Ctx, [{Key, {fuzzy, #{}}, Val}|Rest], Acc);
+
+fun_syntax_filter_list(Ctx, [{Key, {fuzzy, Opts}, Val}|Rest], Acc) ->
+    Syntax = #{
+        prefix_length => {integer, 0, 100},
+        max_expansions => {integer, 1, 100},
+        '__defaults' => #{
+            prefix_length => 0,
+            max_expansions => 50
+        }
+    },
+    case nklib_syntax:parse(Opts, Syntax) of
+        {ok, Opts2, _} ->
+            Term = #{fuzzy => #{Key => Opts2#{value=>Val}}},
+            fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, Term, Acc));
+        {error, Error} ->
+            {error, Error}
+    end;
 
 fun_syntax_filter_list(Ctx, [{Key, subdir, Path}|Rest], Acc) ->
     Term = case to_bin(Path) of
