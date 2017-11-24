@@ -103,7 +103,7 @@ query(Spec) ->
     Syntax2 = Syntax1#{sort_fields_map => ignore, aggs => ignore},
     case nklib_syntax:parse(Spec, Syntax2, Meta) of
         {ok, #{filter_list:=FilterList}=Parsed, _} ->
-            Body1 = maps:with([from, size, fields, sort, '_source'], Parsed),
+            Body1 = maps:with([from, size, fields, sort], Parsed),
             % A specific '_source' can be added by syntax fun. If not, add it
             Body2 = case maps:is_key('_source', Body1) of
                 true ->
@@ -126,10 +126,10 @@ query(Spec) ->
                 _ ->
                     Body3
             end,
-            lager:info("NEW Query: ~s", [nklib_json:encode_pretty(Body4)]),
+            % lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
             {ok, Body4};
         {ok, Parsed, _} ->
-            Body1 = maps:with([from, size, fields, sort, '_source'], Parsed),
+            Body1 = maps:with([from, size, fields, sort], Parsed),
             % A specific '_source' can be added by syntax fun. If not, add it
             Body2 = case maps:is_key('_source', Body1) of
                 true ->
@@ -162,7 +162,7 @@ query(Spec) ->
                 _ ->
                     Body3
             end,
-            % lager:info("Query: ~s", [nklib_json:encode_pretty(Body4)]),
+            % lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
             {ok, Body4};
         {error, Error} ->
             {error, Error}
