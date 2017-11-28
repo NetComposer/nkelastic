@@ -421,10 +421,10 @@ req_error(Code, Body, _Debug) ->
 %% @private
 get_error(Type, Reason) ->
     case Type of
-        <<"index_not_found_exception">> -> index_not_found;
-        <<"search_phase_execution_exception">> -> search_error;
-        <<"illegal_argument_exception">> -> illegal_argument;
-        <<"index_already_exists_exception">> -> index_already_exists;
+        <<"index_not_found_exception">> -> {index_not_found, Reason};
+        <<"search_phase_execution_exception">> -> {search_error, Reason};
+        <<"illegal_argument_exception">> -> {illegal_argument, Reason};
+        <<"index_already_exists_exception">> -> {index_already_exists, Reason};
         _ ->
             lager:notice("NkELASTIC unrecognized error: ~s, ~s", [Type, Reason]),
             Type
