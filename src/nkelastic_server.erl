@@ -336,9 +336,22 @@ do_req(Worker, Method, Path, Body, Timeout, Debug) ->
                 nklib_json:encode(Body)
             };
         false ->
-            {[], Body}
+            case Body of
+                <<"{", _/binary>> ->
+                    {
+                        [{<<"Content-Type">>, <<"application/json">>}],
+                        Body
+                    };
+                _ ->
+                    {[], Body}
+            end
     end,
-    %% io:format("ES BODY: ~s\n~s\n\n", [Path, nklib_json:encode_pretty(nklib_json:decode(Body2))]),
+%%    case is_map(Body) of
+%%        true ->
+%%            io:format("ES BODY: ~s\n~s\n\n", [Path, nklib_json:encode_pretty(nklib_json:decode(Body2))]);
+%%        false ->
+%%            ok
+%%    end,
     case Body2 of
         error ->
             {error, {json_error, Body}};
@@ -427,6 +440,7 @@ get_error(Type, Reason) ->
         <<"illegal_argument_exception">> -> {illegal_argument, Reason};
         <<"index_already_exists_exception">> -> {index_already_exists, Reason};
         <<"strict_dynamic_mapping_exception">> -> {strict_mapping, Reason};
+        <<"index_template_missing_exception">> -> {template_not_found, Reason};
         _ ->
             lager:notice("NkELASTIC unrecognized error: ~s, ~s", [Type, Reason]),
             {Type, Reason}

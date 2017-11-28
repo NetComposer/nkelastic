@@ -275,7 +275,7 @@ get_all_templates(Opts) ->
 
 create_template(Name, IndexOpts, Opts) ->
     Body1 = index_params(IndexOpts),
-    Body2 = Body1#{template=>to_bin(Name)},
+    Body2 = Body1#{template=><<(to_bin(Name))/binary, $*>>},
     request(put, ["_template/", Name], Body2, Opts).
 
 

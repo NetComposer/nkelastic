@@ -158,7 +158,7 @@ update_analysis(SrvId, Cluster, Index, Opts) ->
 %% Options
 update_or_create_index(SrvId, Cluster, Index, Opts) ->
     case update_index(SrvId, Cluster, Index, Opts) of
-        {error, index_not_found} ->
+        {error, {index_not_found, _}} ->
             lager:info("NkELASTIC: Index ~s not found, creating it", [Index]),
             create_index(SrvId, Cluster, Index, Opts);
         Other ->
