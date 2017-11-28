@@ -62,6 +62,8 @@
 
 -type filter_list() :: [filter_spec() | {'and'|'or'|'not', filter_spec()|[filter_spec()]}].
 
+-type sort_spec() :: atom() | binary() | #{atom()|binary() => search_sort_opts()}.
+
 
 -type search_spec() ::
     #{
@@ -70,7 +72,7 @@
         fields => [binary()],
         filters => #{atom()|binary() => term()}, %% See above
         filter_list => filter_list(),
-        sort => atom() | binary() | #{atom()|binary() => search_sort_opts()},
+        sort => sort_spec(),
         simply_query => binary(),
         simple_query_opts => #{fields=>[binary()], default_operator=>'AND' | 'OR'},
         sort_fields_map => #{atom() | binary() => atom() | binary()}
@@ -126,7 +128,7 @@ query(Spec) ->
                 _ ->
                     Body3
             end,
-            % lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
+            lager:info("NEW Query: ~s", [nklib_json:encode_pretty(Body4)]),
             {ok, Body4};
         {ok, Parsed, _} ->
             Body1 = maps:with([from, size, fields, sort, '_source'], Parsed),
@@ -144,25 +146,22 @@ query(Spec) ->
                 error ->
                     #{}
             end,
-            Query2 = case maps:get(filters, Parsed, []) of
+            % TODO Temporary hack
+            Query2 = Query1#{must_not => #{term => #{is_deleted=>true}}},
+            Query3 = case maps:get(filters, Parsed, []) of
                 [] ->
-                    Query1;
+                    Query2;
                 Filters ->
-                    Query1#{filter=>Filters}
+                    Query2#{filter=>Filters}
             end,
-            Body3 = case map_size(Query2)==0 of
-                true ->
-                    Body2;
-                false ->
-                    Body2#{query => #{bool => Query2}}
-            end,
+            Body3 = Body2#{query => #{bool =>Query3}},
             Body4 = case Spec of
                 #{aggs:=Aggs} when is_map(Aggs) ->
                     Body3#{aggs=>Aggs};
                 _ ->
                     Body3
             end,
-            % lager:info("Query: ~s", [nklib_json:encode_pretty(Body5)]),
+            % lager:notice("Query: ~s", [nklib_json:encode_pretty(Body4)]),
             {ok, Body4};
         {error, Error} ->
             {error, Error}
@@ -404,28 +403,28 @@ fun_syntax_filter_list(_Ctx, [], Acc) ->
     Acc;
 
 fun_syntax_filter_list(Ctx, [{Key, eq, Val}|Rest], Acc) ->
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{term => #{Key => Val}}, Acc));
+    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{term => #{f(Key) => Val}}, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, values, Val}|Rest], Acc) when is_list(Val) ->
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{terms => #{Key => Val}}, Acc));
+    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{terms => #{f(Key) => Val}}, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, gt, Val}|Rest], Acc) ->
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{range => #{Key => #{gt => Val}}}, Acc));
+    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{range => #{f(Key) => #{gt => Val}}}, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, gte, Val}|Rest], Acc) ->
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{range => #{Key => #{gte => Val}}}, Acc));
+    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{range => #{f(Key) => #{gte => Val}}}, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, lt, Val}|Rest], Acc) ->
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{range => #{Key => #{lt => Val}}}, Acc));
+    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{range => #{f(Key) => #{lt => Val}}}, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, lte, Val}|Rest], Acc) ->
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{range => #{Key => #{lte => Val}}}, Acc));
+    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{range => #{f(Key) => #{lte => Val}}}, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, prefix, Val}|Rest], Acc) ->
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{prefix => #{Key => Val}}, Acc));
+    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{prefix => #{f(Key) => Val}}, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, fuzzy, Val}|Rest], Acc) ->
-    fun_syntax_filter_list(Ctx, [{Key, {fuzzy, #{}}, Val}|Rest], Acc);
+    fun_syntax_filter_list(Ctx, [{f(Key), {fuzzy, #{}}, Val}|Rest], Acc);
 
 fun_syntax_filter_list(Ctx, [{Key, {fuzzy, Opts}, Val}|Rest], Acc) ->
     Syntax = #{
@@ -438,7 +437,7 @@ fun_syntax_filter_list(Ctx, [{Key, {fuzzy, Opts}, Val}|Rest], Acc) ->
     },
     case nklib_syntax:parse(Opts, Syntax) of
         {ok, Opts2, _} ->
-            Term = #{fuzzy => #{Key => Opts2#{value=>Val}}},
+            Term = #{fuzzy => #{f(Key) => Opts2#{value=>Val}}},
             fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, Term, Acc));
         {error, Error} ->
             {error, Error}
@@ -447,20 +446,20 @@ fun_syntax_filter_list(Ctx, [{Key, {fuzzy, Opts}, Val}|Rest], Acc) ->
 fun_syntax_filter_list(Ctx, [{Key, subdir, Path}|Rest], Acc) ->
     Term = case to_bin(Path) of
         <<"/">> ->
-            #{wildcard => #{Key => <<"/?*">>}};
+            #{wildcard => #{f(Key) => <<"/?*">>}};
         Path2 ->
-            #{prefix => #{Key => <<Path2/binary, $/>>}}
+            #{prefix => #{f(Key) => <<Path2/binary, $/>>}}
     end,
     fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, Term, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, exists, Val}|Rest], Acc) ->
     case nklib_syntax:spec(boolean, Val) of
         {ok, true} ->
-            fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{exists => #{field => Key}}, Acc));
+            fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{exists => #{field => f(Key)}}, Acc));
         {ok, false} when Ctx == filter ->
-            fun_syntax_filter_list(Ctx, [{'not', {Key, exists, true}}|Rest], Acc);
+            fun_syntax_filter_list(Ctx, [{'not', {f(Key), exists, true}}|Rest], Acc);
         {ok, false} when Ctx == must_not ->
-            fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{exists => #{field => Key}}, Acc));
+            fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{exists => #{field => f(Key)}}, Acc));
         {ok, false} when Ctx == should ->
             lager:error("NKLOG Used exists false in OR"),
             error;
@@ -530,6 +529,12 @@ add_filter(should, Term, Acc) ->
     Acc#{should => Filter2}.
 
 
+
+%% @private
+f(Field) when is_atom(Field) -> to_bin(Field);
+f(Field) when is_binary(Field) -> Field;
+f(Field) when is_list(Field), is_integer(hd(Field)) -> to_bin(Field);
+f(Field) when is_list(Field) -> list_to_binary(Field).
 
 
 %% @private
