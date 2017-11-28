@@ -190,6 +190,7 @@ delete_index(#{index:=Index}=Opts) ->
     {ok, resp_meta()} | {error, error()}.
 
 update_index(IndexOpts, #{index:=Index}=Opts) ->
+
     request(put, [Index, "/_settings"], #{index=>IndexOpts}, Opts).
 
 
@@ -204,7 +205,7 @@ update_analysis(Analysis, #{index:=Index}=Opts) ->
 %% @doc Tries to update an index, or create it
 update_or_create_index(IndexOpts, #{index:=Index}=Opts) ->
     case update_index(IndexOpts, Opts) of
-        {error, index_not_found} ->
+        {error, {index_not_found, _}} ->
             lager:notice("NkELASTIC: Index ~s not found, creating it", [Index]),
             create_index(IndexOpts, Opts);
         {ok, Meta} ->
@@ -223,12 +224,20 @@ update_or_create_index(IndexOpts, #{index:=Index}=Opts) ->
 %%}
 %% Metafields: https://www.elastic.co/guide/en/elasticsearch/
 %%                     reference/current/mappnkseing-fields.html
+%% Type is dynamic (see nkelastic_plugin)
+%% - true (default)
+%% - false: Not indexed, but added to source
+%% - strict: launch exception
+%%
+%% https://stackoverflow.com/questions/33263673/disable-dynamic-mapping-creation-for-only-specific-indexes-on-elasticsearch
+
 -spec add_mapping(map(), opts()) ->
     {ok, resp_meta()} | {error, error()}.
 
 add_mapping(Mapping, #{index:=Index, type:=Type}=Opts) ->
     {Metas, Props} = extract_mappings(Mapping),
-    Body = Metas#{properties=>Props},
+    Dynamic = maps:get(type_is_dynamic, Opts, false),
+    Body = Metas#{dynamic=>Dynamic, properties=>Props},
     request(put, [Index, "/", to_bin(Type), "/_mapping"], Body, Opts).
 
 

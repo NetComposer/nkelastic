@@ -338,6 +338,7 @@ do_req(Worker, Method, Path, Body, Timeout, Debug) ->
         false ->
             {[], Body}
     end,
+    %% io:format("ES BODY: ~s\n~s\n\n", [Path, nklib_json:encode_pretty(nklib_json:decode(Body2))]),
     case Body2 of
         error ->
             {error, {json_error, Body}};
@@ -425,9 +426,10 @@ get_error(Type, Reason) ->
         <<"search_phase_execution_exception">> -> {search_error, Reason};
         <<"illegal_argument_exception">> -> {illegal_argument, Reason};
         <<"index_already_exists_exception">> -> {index_already_exists, Reason};
+        <<"strict_dynamic_mapping_exception">> -> {strict_mapping, Reason};
         _ ->
             lager:notice("NkELASTIC unrecognized error: ~s, ~s", [Type, Reason]),
-            Type
+            {Type, Reason}
     end.
 
 
