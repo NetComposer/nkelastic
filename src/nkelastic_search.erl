@@ -128,7 +128,7 @@ query(Spec) ->
                 _ ->
                     Body3
             end,
-            lager:info("NEW Query: ~s", [nklib_json:encode_pretty(Body4)]),
+            % lager:info("NEW Query: ~s", [nklib_json:encode_pretty(Body4)]),
             {ok, Body4};
         {ok, Parsed, _} ->
             Body1 = maps:with([from, size, fields, sort, '_source'], Parsed),
