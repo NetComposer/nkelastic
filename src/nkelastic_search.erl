@@ -128,7 +128,7 @@ query(Spec) ->
                 _ ->
                     Body3
             end,
-            lager:info("NEW Query: ~s", [nklib_json:encode_pretty(Body4)]),
+            % lager:info("NEW Query: ~s", [nklib_json:encode_pretty(Body4)]),
             {ok, Body4};
         {ok, Parsed, _} ->
             Body1 = maps:with([from, size, fields, sort, '_source'], Parsed),
@@ -466,24 +466,6 @@ fun_syntax_filter_list(Ctx, [{Key, exists, Val}|Rest], Acc) ->
         error ->
             error
     end;
-
-fun_syntax_filter_list(Ctx, [{start_stop_range, FieldStart, FieldStop, RangeStart, RangeStop}|Rest], Acc) ->
-    FieldStart2 = f(FieldStart),
-    FieldStop2 = f(FieldStop),
-    Filter = #{
-        bool => #{
-            minimum_should_match => 1,
-            should => [
-%%                #{range => #{FieldStart2 => #{gte => RangeStart, lt => RangeStop, format => epoch_millis}}},
-%%                #{range => #{FieldStop2 => #{gt => RangeStart, lt => RangeStop, format => epoch_millis}}},
-                #{bool => #{
-                    filter => [
-                        #{range => #{FieldStart2 => #{lte => RangeStart, format => epoch_millis}}},
-                        #{range => #{FieldStop2 => #{gt => RangeStop, format => epoch_millis}}}
-                    ]}}
-            ]}
-    },
-    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, Filter, Acc));
 
 fun_syntax_filter_list(Ctx, [{simple_query, Str}|Rest], Acc) ->
     fun_syntax_filter_list(Ctx, [{simple_query, Str, #{}}|Rest], Acc);
