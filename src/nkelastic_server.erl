@@ -87,7 +87,7 @@ req(SrvId, Pool, Method, Path, Body, Timeout) ->
 %% @private
 get_pool(SrvId, Id) ->
     Name = SrvId:config_nkelastic(),
-    gen_server:call(Name, {get_pool, Id}).
+    gen_server:call(Name, {get_pool, Id}, 30000).
 
 
 %% @doc
