@@ -79,7 +79,7 @@ req(SrvId, Pool, Method, Path, Body, Timeout) ->
             Fun = fun(Worker) ->
                 do_req(Worker, Method, to_bin(Path), Body, Timeout, Debug)
             end,
-            poolboy:transaction(Pid, Fun);
+            poolboy:transaction(Pid, Fun, 30000);
         {error, Error} ->
             {error, Error}
     end.
