@@ -61,6 +61,7 @@ start(_Type, _Args) ->
             {ok, Vsn} = application:get_key(?APP, vsn),
             lager:info("NkELASTIC v~s is starting", [Vsn]),
             {ok, Pid} = nkelastic_sup:start_link(),
+            ok = nkservice_util:register_package(?PKG_ELASTIC, nkelastic),
             {ok, Pid};
         {error, Error} ->
             lager:error("Error parsing config: ~p", [Error]),

@@ -25,6 +25,8 @@
 -define(SRV, es_test).
 
 -compile(export_all).
+-compile(nowarn_export_all).
+
 
 -include_lib("nkservice/include/nkservice.hrl").
 
@@ -33,13 +35,36 @@
 %% ===================================================================
 
 
+
 %% @doc Starts the service
 start() ->
-    {ok, List} = application:get_env(nkelastic, stores),
     Spec = #{
-        callback => ?MODULE,
-        nkelastic => List,
-        debug => [{nkelastic, [full]}]
+        plugins => [?MODULE],
+        packages => [
+            #{
+                id => es1,
+                class => 'Elastic',
+                config => #{
+                    targets => [
+                        #{
+                            url => "http://127.0.0.1:9200",
+                            debug => true
+                        }
+                    ],
+                    debug => pooler,
+                    index => i1,
+                    type => t1
+                }
+            }
+        ],
+        modules => [
+            #{
+                id => s1,
+                class => luerl,
+                code => s1(),
+                debug => true
+            }
+        ]
     },
     nkservice:start(?SRV, Spec).
 
@@ -49,37 +74,32 @@ stop() ->
     nkservice:stop(?SRV).
 
 
-plugin_deps() ->
-    [nkelastic].
+getRequest() ->
+    nkservice_luerl_instance:call({?SRV, s1, main}, [getRequest], []).
 
 
+s1() -> <<"
+    esConfig = {
+        targets = {
+            {
+                url = 'http://127.0.0.1:9200',
+                weight = 100,
+                pool = 5
+            }
+        },
+        resolveInterval = 0,
+        debug = {'full', 'pooler'}
+    }
 
-health(Pool, Num) ->
-    Refs = [make_ref() || _ <- lists:seq(1,Num)],
-    Self = self(),
-    Start = nklib_util:m_timestamp(),
-    lists:foreach(
-        fun(Ref) ->
-            spawn_link(
-                fun() ->
-                    {ok, _, Time} = nkelastic_server:req(es_test, Pool, get, "/"),
-                    Self ! {t, Ref, Time}
-                end)
-        end,
-        Refs),
-    Times = wait_refs(Refs, []),
-    {nklib_util:m_timestamp() - Start, Times}.
+    es = startPackage('Elastic', esConfig)
+
+    function getRequest()
+        return es.request('get', '/')
+    end
+
+">>.
 
 
+opts() ->
+    nkservice_util:get_cache(?SRV, {nkelastic, <<"es1">>, opts}).
 
-wait_refs([], Times) ->
-    Times;
-
-wait_refs(Refs, Times) ->
-    receive
-        {t, Ref, Time} ->
-            true = lists:member(Ref, Refs),
-            wait_refs(Refs -- [Ref], [Time*1000|Times])
-    after 5000 ->
-        error
-    end.

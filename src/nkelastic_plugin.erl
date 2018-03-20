@@ -18,57 +18,150 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc NkELASTIC callbacks
+%% @doc NkELASTIC Plugin Config
 
 -module(nkelastic_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_config/2,plugin_start/2]).
+-export([plugin_deps/0, plugin_api/1, plugin_config/3,
+         plugin_start/4, plugin_update/5]).
+
+-include("nkelastic.hrl").
+
+-define(LLOG(Type, Txt, Args),lager:Type("NkELASTIC "++Txt, Args)).
+
+
+%% ===================================================================
+%% Types
+%% ===================================================================
 
 
 
 %% ===================================================================
-%% Plugin callbacks
-%%
-%% These are used when NkELASTIC is started as a NkSERVICE plugin
+%% Plugin Callbacks
 %% ===================================================================
 
 
+%% @doc
 plugin_deps() ->
     [].
 
+%% @doc
+plugin_api(?PKG_ELASTIC) ->
+    #{
+        luerl => #{
+            request => {nkelastic, luerl_request}
+        }
+    };
 
-plugin_syntax() ->
-	#{
-	    nkelastic_pools =>
-            {list, #{
-                id => binary,
-                url => fun nkelastic_util:parse_url/1,
-                pool_size => {integer, 1, none},
-                pool_overflow => {integer, 1, none},
-                '__mandatory' => [id, url]
-           }}
-}.
+plugin_api(_Class) ->
+    #{}.
 
 
-plugin_config(#{nkelastic_pools:=Pools}=Config, #{id:=SrvId}) ->
-    case nkservice_util:get_config_ids(Pools) of
-        {ok, _} ->
-            ServerId = nklib_util:to_atom(<<(nklib_util:to_binary(SrvId))/binary, "_nkelastic">>),
-            {ok, Config#{nkelastic_server_id=>ServerId}, ServerId};
+%% @doc
+plugin_config(?PKG_ELASTIC, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
+    Syntax = #{
+        targets => {list, #{
+            url => binary,
+            opts => nkpacket_syntax:safe_syntax(),
+            weight => {integer, 1, 1000},
+            pool => {integer, 1, 1000},
+            refresh => boolean,
+            headers => map,
+            '__mandatory' => [url]
+        }},
+        debug => {list, {atom, [basic, full, pooler]}},
+        index => binary,                        % Default index
+        type => binary,                         % Default type
+        resolveInterval => {integer, 0, none},
+        '__mandatory' => [targets]
+    },
+    case nklib_syntax:parse(Config, Syntax) of
+        {ok, Parsed, _} ->
+            Debug1 = maps:get(debug, Parsed, []),
+            Debug2 = case lists:member(full, Debug1) of
+                true ->
+                    full;
+                false ->
+                    lists:member(basic, Debug1)
+            end,
+            DebugMap = #{{nkelastic, Id, debug} => Debug2},
+            Opts1 = lists:flatten([
+                {srv_id, SrvId},
+                {package_id, Id},
+                case maps:get(index, Parsed, <<>>) of
+                    <<>> -> [];
+                    Index -> {index, Index}
+                end,
+                case maps:get(type, Parsed, <<>>) of
+                    <<>> -> [];
+                    Type -> {type, Type}
+                end
+            ]),
+            CacheMap = #{{nkelastic, Id, opts} => maps:from_list(Opts1)},
+            {ok, Spec#{config:=Parsed, cache_map=>CacheMap, debug_map=>DebugMap}};
         {error, Error} ->
             {error, Error}
     end;
 
-plugin_config(Config, _Service) ->
-    {ok, Config}.
+plugin_config(_Class, _Package, _Service) ->
+    continue.
 
 
-plugin_start(#{nkelastic_server_id:=ServerId, nkelastic_pools:=Pools}=Config, #{id:=SrvId}) ->
-    {ok, _} = nkservice_srv:start_proc(SrvId, ServerId, nkelastic_server, [SrvId, ServerId, Pools]),
-    {ok, Config};
+%% @doc
+plugin_start(?PKG_ELASTIC, #{id:=Id, config:=Config}, Pid, Service) ->
+    insert(Id, Config, Pid, Service);
 
-plugin_start(Config, _Service) ->
-    {ok, Config}.
+plugin_start(_Id, _Spec, _Pid, _Service) ->
+    continue.
 
+
+%% @doc
+%% Even if we are called only with modified config, we check if the spec is new
+plugin_update(?PKG_ELASTIC, #{id:=Id, config:=NewConfig}, OldSpec, Pid, Service) ->
+    case OldSpec of
+        #{config:=NewConfig} ->
+            ok;
+        _ ->
+            insert(Id, NewConfig, Pid, Service)
+    end;
+
+plugin_update(_Class, _NewSpec, _OldSpec, _Pid, _Service) ->
+    ok.
+
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
+
+%% @private
+insert(Id, Config, SupPid, #{id:=SrvId}) ->
+    Debug = maps:get(debug, Config, []),
+    PoolConfig = #{
+        targets => maps:get(targets, Config),
+        debug => lists:member(pooler, Debug),
+        resolve_interval => maps:get(resolveInterval, Config, 0)
+    },
+    Spec = #{
+        id => Id,
+        start => {nkpacket_httpc_pool, start_link, [{SrvId, Id}, PoolConfig]}
+    },
+    case nkservice_packages_sup:update_child(SupPid, Spec, #{}) of
+        {ok, ChildPid} ->
+            nklib_proc:put({nkelastic, SrvId, Id}, undefined, ChildPid),
+            ?LLOG(debug, "started ~s (~p)", [Id, ChildPid]),
+            ok;
+        not_updated ->
+            ?LLOG(debug, "didn't upgrade ~s", [Id]),
+            ok;
+        {upgraded, ChildPid} ->
+            nklib_proc:put({nkelastic, SrvId, Id}, undefined, ChildPid),
+            ?LLOG(info, "upgraded ~s (~p)", [Id, ChildPid]),
+            ok;
+        {error, Error} ->
+            ?LLOG(notice, "start/update error ~s: ~p", [Id, Error]),
+            {error, Error}
+    end.
 
