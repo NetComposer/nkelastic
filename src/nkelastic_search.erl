@@ -147,7 +147,12 @@ query(Spec) ->
                     #{}
             end,
             % TODO Temporary hack
-            Query2 = Query1#{must_not => #{term => #{is_deleted=>true}}},
+            Query2 = case Spec of
+                #{get_deleted := true} ->
+                    Query1;
+                _ ->
+                    Query1#{must_not => #{term => #{is_deleted=>true}}}
+            end,
             Query3 = case maps:get(filters, Parsed, []) of
                 [] ->
                     Query2;
