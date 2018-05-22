@@ -48,7 +48,7 @@
 
 -type filter_field() :: atom() | binary().
 
--type filter_op() :: eq | values | gt | gte | lt | lte | prefix | subdir | exists | fuzzy | {fuzzy, map()}.
+-type filter_op() :: eq | values | gt | gte | lt | lte | prefix | subdir | exists | fuzzy | {fuzzy, map()} | date_range.
 
 -type simple_query_opts() ::
     #{
@@ -448,6 +448,29 @@ fun_syntax_filter_list(Ctx, [{Key, {fuzzy, Opts}, Val}|Rest], Acc) ->
             {error, Error}
     end;
 
+fun_syntax_filter_list(Ctx, [{Key, date_range, Opts}|Rest], Acc) ->
+    Syntax = #{
+        period => {atom, [today, yesterday, this_week, last_week, last_7_days, this_month, last_month, this_year, last_year, custom]},
+        start_of_week => {atom, [monday, tuesday, wednesday, thursday, friday, saturday, sunday]},
+        time_zone => fun check_time_zone_syntax/1, %+/-HH:mm
+        start_date => integer,
+        end_date => integer,
+        '__mandatory' => [period],
+        '__defaults' => #{
+            time_zone => <<"+00:00">>,
+            start_of_week => sunday
+        },
+        '__post_check' => fun date_syntax_post_check/1
+    },
+    case nklib_syntax:parse(Opts, Syntax) of
+        {ok, Opts2, _} ->
+            Opts3 = get_date_search_fields(Opts2),
+            Term = #{range => #{f(Key) => Opts3}},
+            fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, Term, Acc));
+        {error, Error} ->
+            {error, Error}
+    end;
+
 fun_syntax_filter_list(Ctx, [{Key, subdir, Path}|Rest], Acc) ->
     Term = case to_bin(Path) of
         <<"/">> ->
@@ -540,6 +563,177 @@ f(Field) when is_atom(Field) -> to_bin(Field);
 f(Field) when is_binary(Field) -> Field;
 f(Field) when is_list(Field), is_integer(hd(Field)) -> to_bin(Field);
 f(Field) when is_list(Field) -> list_to_binary(Field).
+
+
+%% @private
+date_syntax_post_check(Data) ->
+    Map = maps:from_list(Data),
+    case Map of
+        #{period := custom, start_date := _, end_date := _} ->
+            ok;
+        #{period := custom, start_date := _} ->
+            {error, {missing_field, end_date}};
+        #{period := custom} ->
+            {error, {missing_field, start_date}};
+        #{period := _} ->
+            ok;
+        #{} ->
+            ok
+    end.
+
+
+%% @private
+check_time_zone_syntax(TimeZone) ->
+    case do_parse_time_zone(to_bin(TimeZone)) of
+        {ok, _} ->
+            ok;
+        _ ->
+            {error, {field, time_zone}}
+    end.
+
+
+%% @private
+do_parse_time_zone(Bin) ->
+    case re:run(Bin, "^([\\+-])*(\\d+):(\\d+)$", [{capture, all_but_first, list}]) of
+        {match, [Sign, H, M]} ->
+            Factor = case Sign of
+                [] -> -1;
+                "+" -> -1;
+                "-" -> 1
+            end,
+            H2 = list_to_integer(H),
+            M2 = list_to_integer(M),
+            {ok, Factor * ((H2*3600) + M2*60)};
+        _ ->
+            case re:run(Bin, "^([\\+-])*(\\d+)$", [{capture, all_but_first, list}]) of
+                {match, [Sign, H]} ->
+                    Factor = case Sign of
+                        [] -> -1;
+                        "+" -> -1;
+                        "-" -> 1
+                    end,
+                    H2 = list_to_integer(H),
+                    {ok, Factor * (H2*3600)};
+                _ ->
+                    error
+            end
+    end.
+
+
+%% @private
+unparse_time_with_format(Epoch, Zone, Format) ->
+    Secs = round(Epoch / 1000),
+    case do_parse_time_zone(Zone) of
+        {ok, ZoneSecs} ->
+            {{Y, M, D}, {H, Mi, _}} = nklib_util:timestamp_to_gmt(Secs - ZoneSecs),
+            Day = case Format of
+                <<"yyyy">> ->
+                    list_to_binary(io_lib:format("~4..0B", [Y]));
+                <<"yyyy-MM*">> ->
+                    list_to_binary(io_lib:format("~4..0B-~2..0B*", [Y,M]));
+                <<"yyyy-MM">> ->
+                    list_to_binary(io_lib:format("~4..0B-~2..0B", [Y,M]));
+                <<"yyyy-MM-dd">> ->
+                    list_to_binary(io_lib:format("~4..0B-~2..0B-~2..0B", [Y,M,D]));
+                _ ->
+                    list_to_binary(io_lib:format("~4..0B-~2..0B-~2..0B", [Y,M,D]))
+            end,
+            Hour = list_to_binary(io_lib:format("~2..0B:~2..0B", [H,Mi])),
+            {ok, Day, Hour};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+% {Interval, Format, From, Lower, To, Upper, TZOffset}
+%% @private
+get_date_search_fields(Spec) ->
+    {_Interval, Format, From, Lower, To, Upper, TZOffset} = case Spec of
+        #{period := custom, start_date := S, end_date := E, time_zone := TZ} ->
+            I = get_interval(Spec),
+            F = get_date_format(I),
+            {ok, S2, _SH2} = unparse_time_with_format(S, TZ, F),
+            {ok, E2, _EH2} = unparse_time_with_format(E, TZ, F),
+            {I, F, S2, <<"gte">>, E2, <<"lte">>, TZ};
+        #{period := today, time_zone := TZ} ->
+            {<<"hour">>, <<"yyyy-MM-dd">>, <<"now/d">>, <<"gte">>, <<"now/h">>, <<"lte">>, TZ};
+        #{period := yesterday, time_zone := TZ} ->
+            {<<"hour">>, <<"yyyy-MM-dd">>, <<"now/d-1d">>, <<"gte">>, <<"now/d-1h">>, <<"lt">>, TZ};
+        #{period := this_week, time_zone := TZ} ->
+            O = to_bin(get_week_offset(Spec)),
+            {<<"day">>, <<"yyyy-MM-dd">>, <<"now-", O/binary, "d/w+", O/binary, "d">>, <<"gte">>, <<"now+1w-", O/binary, "d/w+", O/binary, "d-1d">>, <<"lt">>, TZ};
+        #{period := last_week, time_zone := TZ} ->
+            O = to_bin(get_week_offset(Spec)),
+            {<<"day">>, <<"yyyy-MM-dd">>, <<"now-", O/binary, "d/w+", O/binary, "d-w">>, <<"gte">>, <<"now-", O/binary, "d/w+", O/binary, "d-1d">>, <<"lt">>, TZ};
+        #{period := last_7_days, time_zone := TZ} ->
+            {<<"day">>, <<"yyyy-MM-dd">>, <<"now-6d/d">>, <<"gte">>, <<"now">>, <<"lte">>, TZ};
+        #{period := this_month, time_zone := TZ} ->
+            {<<"day">>, <<"yyyy-MM-dd">>, <<"now/M">>, <<"gte">>, <<"now">>, <<"lte">>, TZ};
+        #{period := last_month, time_zone := TZ} ->
+            {<<"day">>, <<"yyyy-MM-dd">>, <<"now-1M/M">>, <<"gte">>, <<"now/M-1d">>, <<"lt">>, TZ};
+        #{period := this_year, time_zone := TZ} ->
+            {<<"month">>, <<"yyyy-MM">>, <<"now/y">>, <<"gte">>, <<"now">>, <<"lte">>, TZ};
+        #{period := last_year, time_zone := TZ} ->
+            {<<"month">>, <<"yyyy-MM">>, <<"now-1y/y">>, <<"gte">>, <<"now/y-1d">>, <<"lt">>, TZ}
+    end,
+    #{
+        Lower => From,
+        Upper => To,
+        format => Format,
+        time_zone => TZOffset
+    }.
+
+
+%% @private
+get_week_offset(Spec) ->
+    Weekday = maps:get(start_of_week, Spec, sunday),
+    case Weekday of
+        monday    -> 0;
+        tuesday   -> 1;
+        wednesday -> 2;
+        thursday  -> 3;
+        friday    -> 4;
+        saturday  -> 5;
+        sunday    -> 6;
+        _ ->
+            lager:error("Invalid day submitted: ~p", [Weekday]),
+            0
+    end.
+
+
+%% @private
+get_interval(#{start_date := S, end_date := E}=_Spec) ->
+    Diff = E - S,
+    case Diff of
+        N when N > 1000*60*60*24*365*5 ->
+            <<"year">>;
+        N when N > 1000*60*60*24*365*2 ->
+            <<"quarter">>;
+        N when N > 1000*60*60*24*30*2 ->
+            <<"month">>;
+        N when N > 1000*60*60*24*2 ->
+            <<"day">>;
+        _ ->
+            <<"hour">>
+    end.
+
+
+% @private
+get_date_format(Interval) ->
+    case Interval of
+        year ->
+            <<"yyyy">>;
+        quarter ->
+            <<"yyyy-MM*">>;
+        month ->
+            <<"yyyy-MM">>;
+        day ->
+            <<"yyyy-MM-dd">>;
+        hour ->
+            <<"yyyy-MM-dd">>;
+        _ ->
+            <<"yyyy-MM-dd">>
+    end.
 
 
 %% @private
