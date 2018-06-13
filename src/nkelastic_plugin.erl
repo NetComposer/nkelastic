@@ -78,14 +78,7 @@ plugin_config(?PKG_ELASTIC, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
     },
     case nklib_syntax:parse(Config, Syntax) of
         {ok, Parsed, _} ->
-            Debug1 = maps:get(debug, Parsed, []),
-            Debug2 = case lists:member(full, Debug1) of
-                true ->
-                    full;
-                false ->
-                    lists:member(basic, Debug1)
-            end,
-            DebugMap = #{{nkelastic, Id, debug} => Debug2},
+            CacheMap1 = nkservice_config_util:get_cache_map(Spec),
             Opts1 = lists:flatten([
                 {srv_id, SrvId},
                 {package_id, Id},
@@ -98,8 +91,20 @@ plugin_config(?PKG_ELASTIC, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
                     Type -> {type, Type}
                 end
             ]),
-            CacheMap = #{{nkelastic, Id, opts} => maps:from_list(Opts1)},
-            {ok, Spec#{config:=Parsed, cache_map=>CacheMap, debug_map=>DebugMap}};
+            Opts2 = maps:from_list(Opts1),
+            CacheMap2 = nkservice_config_util:set_cache_key(nkelastic, Id, opts, Opts2, CacheMap1),
+            Spec2 = nkservice_config_util:set_cache_map(CacheMap2, Spec),
+            DebugMap1 = nkservice_config_util:get_debug_map(Spec2),
+            Debug1 = maps:get(debug, Parsed, []),
+            Debug2 = case lists:member(full, Debug1) of
+                true ->
+                    full;
+                false ->
+                    lists:member(basic, Debug1)
+            end,
+            DebugMap2 = nkservice_config_util:set_debug_key(nkelastic, Id, debug, Debug2, DebugMap1),
+            Spec3 = nkservice_config_util:set_debug_map(DebugMap2, Spec2),
+            {ok, Spec3#{config:=Parsed}};
         {error, Error} ->
             {error, Error}
     end;

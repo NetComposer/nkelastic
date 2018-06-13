@@ -63,7 +63,7 @@ request(SrvId, PackageId, Method, Path, Body, Timeout) ->
     case nkpacket_httpc_pool:request({SrvId, PackageId2}, Method, Path, Body, Opts) of
         {ok, Status, RepHds, RepBody} ->
             Time = nklib_util:m_timestamp() - Start,
-            Debug = nkservice_util:get_debug(SrvId, {nkelastic, PackageId2, debug}),
+            Debug = nkservice_util:get_debug(SrvId, nkelastic, PackageId2, debug),
             RepBody2 = case nklib_util:get_value(<<"Content-Type">>, RepHds) of
                 <<"application/json", _/binary>> ->
                     nklib_json:decode(RepBody);

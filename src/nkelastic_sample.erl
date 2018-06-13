@@ -101,5 +101,5 @@ s1() -> <<"
 
 
 opts() ->
-    nkservice_util:get_cache(?SRV, {nkelastic, <<"es1">>, opts}).
+    nkservice_util:get_cache(?SRV, nkelastic, <<"es1">>, opts).
 
