@@ -111,7 +111,7 @@ luerl_request(SrvId, PackageId, [Method, Path, Body, Timeout])
         {error, {elastic_error, {Error, Txt}}} ->
             [nil, elastic_error, Error, Txt];
         {error, Error} ->
-            {Code, Txt} = nkservice_error:error(SrvId, Error),
+            {Code, Txt} = nkservice_msg:msg(SrvId, Error),
             [nil, Code, Txt]
     end;
 
