@@ -105,7 +105,7 @@
 health(Opts) ->
     case request(get, "_cluster/health", Opts) of
         {ok, #{<<"status">>:=Status}=Data, Meta} ->
-            {ok, binary_to_atom(Status, latin1), Data, Meta};
+            {ok, nklib_util:make_atom(?MODULE, Status), Data, Meta};
         {error, Error} ->
             {error, Error}
     end.
