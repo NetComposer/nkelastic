@@ -60,6 +60,7 @@ start(_Type, _Args) ->
         {ok, _} ->
             {ok, Vsn} = application:get_key(?APP, vsn),
             lager:info("NkELASTIC v~s is starting", [Vsn]),
+            define_metrics(),
             {ok, Pid} = nkelastic_sup:start_link(),
             {ok, Pid};
         {error, Error} ->
@@ -108,4 +109,7 @@ set_env(Key, Value) ->
 
 
 
+%% @private
+define_metrics() ->
+    nklib_metrics:define_typed_http_duration(<<"elastic">>).
 

@@ -356,6 +356,7 @@ do_req(Worker, Method, Path, Body, Timeout, Debug) ->
         error ->
             {error, {json_error, Body}};
         _ ->
+            Type = parse_query_metric_type(Path),
             case nkhttpc_single:req(Worker, Method, Path, Headers, Body2, Timeout) of
                 {ok, Code, RespHds, RespBody, Time} ->
                     RespBody2 = case nklib_util:get_value(<<"Content-Type">>, RespHds) of
@@ -372,8 +373,10 @@ do_req(Worker, Method, Path, Body, Timeout, Debug) ->
                     req_debug(Method, Path, Body, Code, RespBody, Time, Debug),
                     case (Code>=200 andalso Code<300) of
                         true ->
+                            nklib_metrics:record_http_duration(<<"elastic">>, Type, Method, Code, Time),
                             {ok, RespBody2, Time};
                         false ->
+                            nklib_metrics:record_http_duration(<<"elastic">>, Type, Method, Code, Time),
                             req_error(Code, RespBody2, Debug)
                     end;
                 {error, Error} ->
@@ -472,6 +475,37 @@ req_debug(Method, Path, Body, Code, RespBody, Time, {true, true}) ->
 
 req_debug(Method, Path, _Body, Code, _RespBody, Time, {true, false}) ->
     ?REQ_DBG("~s ~s: ~p ~p msecs", [Method, Path, Code, Time]).
+
+
+%% @private
+parse_query_metric_type(Path) ->
+    parse_query_bin_metric_type(to_bin(Path)).
+
+%% @private
+parse_query_bin_metric_type(<<>>) ->
+    <<>>;
+
+parse_query_bin_metric_type(PathBin) ->
+    PathBin2 = case binary:split(PathBin, <<"?">>) of
+        [] ->
+            <<>>;
+        [P|_] ->
+            P
+    end,
+    PathBin3 = case lists:reverse(binary:split(PathBin2, <<"/">>, [global])) of
+        [] ->
+            <<>>;
+        [P2|_] ->
+            P2
+    end,
+    case binary:split(PathBin3, <<"-">>) of
+        [<<"_search">>] ->
+            <<"search">>;
+        [Type, _UUID | _] ->
+            Type;
+        [_] ->
+            <<"token">>
+    end.
 
 
 %% @private
