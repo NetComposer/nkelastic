@@ -450,7 +450,7 @@ search(Query, #{index:=Index, type:=Type}=Opts) ->
 count(Query, #{index:=Index, type:=Type}=Opts) ->
     Url = index_url(count, Index, Type, <<>>),
     case request(post, Url, Query, Opts) of
-        {ok, #{<<"count">>:=Count}} ->
+        {ok, #{<<"count">>:=Count}, _Meta} ->
             {ok, Count};
         {error, Error} ->
             {error, Error}
