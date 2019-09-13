@@ -48,7 +48,7 @@
 
 -type filter_field() :: atom() | binary().
 
--type filter_op() :: eq | values | gt | gte | lt | lte | prefix | subdir | exists | fuzzy | {fuzzy, map()} | date_range.
+-type filter_op() :: eq | values | gt | gte | lt | lte | prefix | subdir | exists | fuzzy | {fuzzy, map()} | date_range | query_string.
 
 -type simple_query_opts() ::
     #{
@@ -362,6 +362,8 @@ fun_syntax_get_filter(Field, <<"childs_of:", Data/binary>>) ->
     #{prefix => #{Field => <<Data/binary, $/>>}};
 fun_syntax_get_filter(Field, <<"prefix:", Data/binary>>) ->
     #{prefix => #{Field => <<Data/binary>>}};
+fun_syntax_get_filter(Field, <<"query_string:", Data/binary>>) ->
+    #{query_string => #{default_field => Field, 'query' => <<Data/binary>>}};
 fun_syntax_get_filter(Field, <<">=", Data/binary>>) ->
     #{range => #{Field => #{gte => term(Data)}}};
 fun_syntax_get_filter(Field, <<">", Data/binary>>) ->
@@ -470,6 +472,9 @@ fun_syntax_filter_list(Ctx, [{Key, date_range, Opts}|Rest], Acc) ->
         {error, Error} ->
             {error, Error}
     end;
+
+fun_syntax_filter_list(Ctx, [{Key, query_string, Val}|Rest], Acc) ->
+    fun_syntax_filter_list(Ctx, Rest, add_filter(Ctx, #{query_string => #{default_field => f(Key), 'query' => Val}}, Acc));
 
 fun_syntax_filter_list(Ctx, [{Key, subdir, Path}|Rest], Acc) ->
     Term = case to_bin(Path) of
