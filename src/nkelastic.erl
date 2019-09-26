@@ -373,9 +373,16 @@ put(ObjId, Obj, #{index:=Index, type:=Type}=Opts) ->
     case request_data(put, [Index, "/", to_bin(Type), "/", ObjId, Refresh], Obj, Opts) of
         {ok, Data, Meta} ->
             #{
-                <<"_version">> := Vsn,
-                <<"created">> := Created
+                <<"_version">> := Vsn
             } = Data,
+            Created = case Data of
+                #{<<"created">> := IsCreated} ->
+                    IsCreated;
+                #{<<"result">> := <<"created">>} ->
+                    true;
+                _ ->
+                    false
+            end,
             {ok, Meta#{vsn=>Vsn, created=>Created}};
         {error, Error} ->
             {error, Error}
