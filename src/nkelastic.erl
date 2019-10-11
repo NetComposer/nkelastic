@@ -407,7 +407,7 @@ delete(ObjId, #{index:=Index, type:=Type}=Opts) ->
 
 delete_by_query(Query, #{index:=Index, type:=Type}=Opts) ->
     Url =  index_url(delete_by_query, Index, Type, <<>>),
-    request(post, Url, #{query=>Query}, Opts).
+    request(post, Url, Query, Opts).
 
 
 %% @doc Gets all objects having a type
