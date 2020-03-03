@@ -534,7 +534,15 @@ fun_syntax_filter_list(filter, [{'and', Op}|Rest], Acc) ->
     fun_syntax_filter_list(filter, [{'and', [Op]}|Rest], Acc);
 
 fun_syntax_filter_list(filter, [{'or', List}|Rest], Acc) when is_list(List) ->
-    Acc2 = fun_syntax_filter_list(should, List, Acc),
+    AccN = fun_syntax_filter_list(should, List, #{}),
+    Should = maps:get(should, AccN, []),
+    Must = maps:get(must, Acc, []),
+    Must2 = [#{
+        bool => #{
+            should => Should
+        }
+    }|Must],
+    Acc2 = Acc#{must => Must2},
     fun_syntax_filter_list(filter, Rest, Acc2);
 
 fun_syntax_filter_list(filter, [{'or', Op}|Rest], Acc) ->
