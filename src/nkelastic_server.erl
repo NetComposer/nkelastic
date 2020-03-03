@@ -421,6 +421,13 @@ req_error(_Code, #{<<"error">>:=Error}, Debug) ->
         _ ->
             ok
     end,
+    case Type of
+        <<"mapper_parsing_exception">> ->
+            % Log error information to help debugging this error
+            lager:error("NkELASTIC mapper_parsing_exception: ~p", [Error]);
+        _ ->
+            ok
+    end,
     {error, get_error(Type, Reason)};
 
 req_error(404, _Body, _Debug) ->
